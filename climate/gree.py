@@ -1,0 +1,395 @@
+"""
+GREE空调 BY 菲佣 1.0
+"""
+from datetime import timedelta
+from base64 import b64encode, b64decode
+import asyncio
+import binascii
+import logging
+import socket
+
+import voluptuous as vol
+
+from homeassistant.core import callback
+from homeassistant.components.climate import (
+    ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW, DOMAIN,
+    ClimateDevice, PLATFORM_SCHEMA, STATE_AUTO,
+    STATE_COOL, STATE_HEAT, SUPPORT_TARGET_TEMPERATURE,
+    SUPPORT_TARGET_TEMPERATURE_HIGH, SUPPORT_TARGET_TEMPERATURE_LOW,
+    SUPPORT_OPERATION_MODE)
+from homeassistant.const import (
+    TEMP_CELSIUS, TEMP_FAHRENHEIT, ATTR_TEMPERATURE, ATTR_UNIT_OF_MEASUREMENT,
+    CONF_NAME, CONF_HOST, CONF_MAC, CONF_TIMEOUT)
+from homeassistant.helpers import condition
+from homeassistant.helpers.event import (
+    async_track_state_change, async_track_time_interval)
+import homeassistant.helpers.config_validation as cv
+
+_LOGGER = logging.getLogger(__name__)
+
+DEPENDENCIES = ['sensor']
+
+DEFAULT_TOLERANCE = 0.3
+DEFAULT_NAME = 'GREE Thermostat'
+
+DEFAULT_TIMEOUT = 10
+DEFAULT_RETRY = 3
+
+DEFAULT_MIN_TMEP = 16
+DEFAULT_MAX_TMEP = 30
+DEFAULT_STEP = 1
+
+CONF_SENSOR = 'target_sensor'
+CONF_TARGET_TEMP = 'target_temp'
+devtype = 0x2712
+
+SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_OPERATION_MODE)
+
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
+    vol.Required(CONF_HOST): cv.string,
+    vol.Required(CONF_MAC): cv.string,
+    vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): cv.positive_int,
+    vol.Required(CONF_SENSOR): cv.entity_id,
+    vol.Optional(CONF_TARGET_TEMP): vol.Coerce(float)
+})
+
+@asyncio.coroutine
+def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
+    """Set up the generic thermostat platform."""
+    import broadlink
+    ip_addr = config.get(CONF_HOST)
+    mac_addr = binascii.unhexlify(
+        config.get(CONF_MAC).encode().replace(b':', b''))
+
+    name = config.get(CONF_NAME)
+    sensor_entity_id = config.get(CONF_SENSOR)
+    target_temp = config.get(CONF_TARGET_TEMP)
+
+    broadlink_device = broadlink.rm((ip_addr, 80), mac_addr, None)
+    broadlink_device.timeout = config.get(CONF_TIMEOUT)
+    try:
+        broadlink_device.auth()
+    except socket.timeout:
+        _LOGGER.error("Failed to connect to device")
+
+    async_add_devices([DemoClimate(
+            hass, name, target_temp, None, None, None, None, None,
+            None, 'off', None, DEFAULT_MAX_TMEP, DEFAULT_MIN_TMEP, 
+            broadlink_device, sensor_entity_id)])
+
+
+class DemoClimate(ClimateDevice):
+    """Representation of a demo climate device."""
+
+    def __init__(self, hass, name, target_temperature, target_humidity,
+                away, hold, current_fan_mode, current_humidity,
+                current_swing_mode, current_operation, aux,
+                target_temp_high, target_temp_low,
+                broadlink_device, sensor_entity_id):
+                 
+        """Initialize the climate device."""
+        self.hass = hass
+        self._name = name if name else DEFAULT_NAME
+        self._target_temperature = target_temperature
+        self._target_humidity = target_humidity
+        self._away = away
+        self._hold = hold
+        self._current_humidity = current_humidity
+        self._current_fan_mode = current_fan_mode
+        self._current_operation = current_operation
+        self._aux = aux
+        self._current_swing_mode = current_swing_mode
+        self._fan_list = ['On Low', 'On High', 'Auto Low', 'Auto High', 'Off']
+        self._operation_list = ['heat', 'cool', 'auto', 'off']
+        self._swing_list = ['Auto', '1', '2', '3', 'Off']
+        self._target_temperature_high = target_temp_high
+        self._target_temperature_low = target_temp_low
+        self._max_temp = target_temp_high + 1
+        self._min_temp = target_temp_low - 1
+        self._target_temp_step = DEFAULT_STEP
+
+        self._unit_of_measurement = TEMP_CELSIUS
+        self._current_temperature = None
+
+        self._device = broadlink_device
+
+        async_track_state_change(
+            hass, sensor_entity_id, self._async_sensor_changed)
+        
+        sensor_state = hass.states.get(sensor_entity_id)
+        if sensor_state:
+            self._async_update_temp(sensor_state)
+
+    @callback
+    def _async_update_temp(self, state):
+        """Update thermostat with latest state from sensor."""
+        unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
+
+        try:
+            self._current_temperature = self.hass.config.units.temperature(
+                float(state.state), unit)
+        except ValueError as ex:
+            _LOGGER.error('Unable to update from sensor: %s', ex)
+
+    @asyncio.coroutine
+    def _async_sensor_changed(self, entity_id, old_state, new_state):
+        """Handle temperature changes."""
+        if new_state is None:
+            return
+
+        self._async_update_temp(new_state)
+        yield from self.async_update_ha_state()
+
+    @property
+    def supported_features(self):
+        """Return the list of supported features."""
+        return SUPPORT_FLAGS
+
+    @property
+    def min_temp(self):
+        """Return the minimum temperature."""
+        return self._min_temp
+
+    @property
+    def max_temp(self):
+        """Return the maximum temperature."""
+        return self._max_temp
+    
+    @property
+    def target_temperature_step(self):
+        return self._target_temp_step
+    
+    @property
+    def should_poll(self):
+        """Return the polling state."""
+        return False
+
+    @property
+    def name(self):
+        """Return the name of the climate device."""
+        return self._name
+
+    @property
+    def temperature_unit(self):
+        """Return the unit of measurement."""
+        return self._unit_of_measurement
+
+    @property
+    def current_temperature(self):
+        """Return the current temperature."""
+        return self._current_temperature
+
+    @property
+    def target_temperature(self):
+        """Return the temperature we try to reach."""
+        return self._target_temperature
+
+
+    @property
+    def target_temperature_high(self):
+        """Return the highbound target temperature we try to reach."""
+        return self._target_temperature_high
+
+    @property
+    def target_temperature_low(self):
+        """Return the lowbound target temperature we try to reach."""
+        return self._target_temperature_low
+
+    @property
+    def current_humidity(self):
+        """Return the current humidity."""
+        return self._current_humidity
+
+    @property
+    def target_humidity(self):
+        """Return the humidity we try to reach."""
+        return self._target_humidity
+
+    @property
+    def current_operation(self):
+        """Return current operation ie. heat, cool, idle."""
+        return self._current_operation
+
+    @property
+    def operation_list(self):
+        """Return the list of available operation modes."""
+        return self._operation_list
+
+    @property
+    def is_away_mode_on(self):
+        """Return if away mode is on."""
+        return self._away
+
+    @property
+    def current_hold_mode(self):
+        """Return hold mode setting."""
+        return self._hold
+
+    @property
+    def is_aux_heat_on(self):
+        """Return true if away mode is on."""
+        return self._aux
+
+    @property
+    def current_fan_mode(self):
+        """Return the fan setting."""
+        return self._current_fan_mode
+
+    @property
+    def fan_list(self):
+        """Return the list of available fan modes."""
+        return self._fan_list
+
+    def set_temperature(self, **kwargs):
+        """Set new target temperatures."""
+        if kwargs.get(ATTR_TEMPERATURE) is not None:
+            self._target_temperature = kwargs.get(ATTR_TEMPERATURE)
+        if kwargs.get(ATTR_TARGET_TEMP_HIGH) is not None and \
+           kwargs.get(ATTR_TARGET_TEMP_LOW) is not None:
+            self._target_temperature_high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
+            self._target_temperature_low = kwargs.get(ATTR_TARGET_TEMP_LOW)
+
+        if self._target_temperature < self._target_temperature_low:
+            self._current_operation = 'off'
+            self._target_temperature = self._target_temperature_low
+        elif self._target_temperature > self._target_temperature_high:
+            self._current_operation = 'off'
+            self._target_temperature = self._target_temperature_high
+        elif self._current_temperature and (self._current_operation == "off" or self._current_operation == "idle"):
+            self.set_operation_mode('auto')
+            return
+
+        self._sendpacket()
+        self.schedule_update_ha_state()
+
+    def set_humidity(self, humidity):
+        """Set new target temperature."""
+        self._target_humidity = humidity
+        self.schedule_update_ha_state()
+
+    def set_swing_mode(self, swing_mode):
+        """Set new target temperature."""
+        self._current_swing_mode = swing_mode
+        self.schedule_update_ha_state()
+
+    def set_fan_mode(self, fan):
+        """Set new target temperature."""
+        self._current_fan_mode = fan
+        self.schedule_update_ha_state()
+
+    def set_operation_mode(self, operation_mode):
+        """Set new target temperature."""
+        self._current_operation = operation_mode
+        self._sendpacket()
+        self.schedule_update_ha_state()
+
+    @property
+    def current_swing_mode(self):
+        """Return the swing setting."""
+        return self._current_swing_mode
+
+    @property
+    def swing_list(self):
+        """List of available swing modes."""
+        return self._swing_list
+
+    def turn_away_mode_on(self):
+        """Turn away mode on."""
+        self._away = True
+        self.schedule_update_ha_state()
+
+    def turn_away_mode_off(self):
+        """Turn away mode off."""
+        self._away = False
+        self.schedule_update_ha_state()
+
+    def set_hold_mode(self, hold):
+        """Update hold mode on."""
+        self._hold = hold
+        self.schedule_update_ha_state()
+
+    def turn_aux_heat_on(self):
+        """Turn away auxillary heater on."""
+        self._aux = True
+        self.schedule_update_ha_state()
+
+    def turn_aux_heat_off(self):
+        """Turn auxillary heater off."""
+        self._aux = False
+        self.schedule_update_ha_state()
+
+    def turn_off(self):
+        self._current_operation = 'off'
+        self._sendpacket()
+        self.schedule_update_ha_state()
+
+    def turn_on(self):
+        self._current_operation = 'auto'
+        self._sendpacket()
+        self.schedule_update_ha_state()
+    
+    def _auth(self, retry=2):
+        try:
+            auth = self._device.auth()
+        except socket.timeout:
+            auth = False
+        if not auth and retry > 0:
+            return self._auth(retry-1)
+        return auth    
+
+    def _sendpacket(self,retry=2):
+        """Send packet to device."""
+        cool = ("JgAkAQABJpYUNxQUExUTORQTExUTFRIVExUTFRMUFBQTFhIUFBQUExQUFBQUFBMUFBQUNxUUEhUTFRMVExUTFBM4FBQUNxUTFBUTOBMVFAACkhQUFBQUFBMVEhQUFBQVExQTFRIVExYSFRMUExUTFhIUExUTFRMUExUUFBMVExQTFRMUExUTFRMUEzkTOBQVExUTAAUmAAEklhM5ExYTExM4FBQUFRMUExUTFRMVEhYTFBMUFBQTFRIVEhYTFRMVExQUFBM5ExUSFRMUExYSFhIUFDgWNhM5FBQTFRI5ExUTAAKUExQTFBQVExYRFRMVExMVFBMVEhUUFBMVExQTFRMWERUTFhMUExMUFBQVExQTFRM5ExQTFRQUExQTORM5ExUTORMADQUAAAAA",
+"JgAkAQABJ5UUNxQUFBQUOBQTFBQUFBQTFDgUFBQUExQUFBQUExQUFBQTFBQUFBQTFBQUOBQUFBMUFBQUFBMUFBQ4FBQUNxQUFBQUOBQTFAACkxQUFBMUFBQUFBMUFBQUFBMUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQTFBQUFBQ4FBMUAAUlAAEmlRQ4FBQUExY2FBQUFBMUFBQUOBQTFBQUFBQUFRIUFBQTFBQUFBQTFBQUFBQ4FBMUFBQUFBMUFBQUEzgUNBg4FBQUExQ4FhIUAAKTFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBQTFBQUFBQTFBQUFDgUOBMADQUAAAAA",
+"JgAkAQABKJMWNhQUFBQVNhQUFBQWERYSFRMWNhYRFhIWEhYRFhIWEhQTFBQWEhYRFhIWNhQUFRIWEhQTFBQUFBY2FhEUOBQUFBQVNhQUFgACkRQTFBQUFBUSFhIUFBYRFhIWEhQTFhIUFBQTFhIWEhQTFhIWEhUSFhIWEhQTFBQUFBQTFhIWEhQTFjYWEhY2FBMWAAUjAAEokxY2FBQUExQ4FhIWEhQTFhIWEhU2FRMWEhYRFhIUFBYRFBQWEhYRFBQUFBY2FhEWEhQUFBMWEhQUFDgVNhY2FBQWEhQ3FhIWAAKRFhEWEhYSFhEWEhYSFhEWEhYSFhEWEhYSFRIWEhYSFBMWEhYSFhEWEhYSFhEWEhY2FBQVEhYSFhIVNhYSFjYWNhYADQUAAAAA",
+"JgAkAQABJ5UUOBQTFBQUOBQTFBQUFBQTFDgUOBQUFBQUExQUFBQTFBQUFBMUFBQUFBMUOBQUFBQUExQUFBQUExQ4FBQUOBQTFBQUOBQUFAACkhQUFBQUExQUFBQUExQUFBQUExQUFBQTFBQUFBQTFBQUFBQTFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUOBQ4FBQUAAUkAAEmlRQ4FBQUFBQ4FBMUFBQUFBMUOBQ4FBQUExQUFBQUExQUFBQUExQUFBQUExQ4FBQUFBMUFBQUExQUFDgUOBQ4FBMUFBQ4FBQUAAKSFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQ3FBQUFRQTFBQUFBQ4EzgUOBQADQUAAAAA",
+"JgAkAQABKZMWNhUSFBQWNhYRFBQWEhQTFhIWEhY2FBMWEhQUFBMWEhYSFRIWEhYSFRIWNhYSFhEWEhYSFhIVEhQ4FhIWNhUSFBQUOBYRFAACkxYSFhEWEhYSFhEWEhYSFBMWEhYSFBMWEhYSFBMWEhYSFRIWEhYSFRIWEhYSFRIWEhQUFRIWEhYSFDcWNhY2FhIWAAUiAAEmlRY2FhIWEhY2FRIWEhYSFRIWEhQUEzgWEhYSFhEWEhYSFhEWEhYSFRIWEhY2FBQVEhYSFBQVEhYSFjYWNhU2FBQWEhY2FRIWAAKRFBQVEhQUFhIVEhYSFhIUExYSFBQVEhQUFhIVEhYSFhIVEhQUFhEWEhYSFhIVEhY2FhIWERYSFhIWNhU2FjYWNhYADQUAAAAA",
+"JgAkAQABJpUUOBQUFBQUOBQTFBQUFBQTFDgUFBQ4FBMUFBQUFBMUFBQUFBMUFBQUFBMUOBQUFBMUFBQUFBMUFBQ4FBQUOBMUFBQUOBQTFAACkxQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUExQUFBQUExQUFBQUFRIUFBQUExQUFBQUExQUFBQUEzgUAAUlAAEmlRQ4FBQUExQ4FBQUExQUFBQUOBQTFDgUFBQUExQUFBQTFBQUFBQUExQUFBQ4FBMUFBQUFBMUFBQUFDgUNxQ4FBQUFBQ3FBQUAAKTFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBQUExQUFBQUExQUFBQUExQADQUAAAAA",
+"JgAkAQABJpUUOBUSFBQWNhYRFhIWEhYRFBQWNhQ4FBQUExYSFBQTFBQUFhIUExQUFhIUNxYSFhIUExYSFhIWERY2FhIWNhQUFRIWNhQUFAACkhYSFBQUExYSFBQVEhQUFBQUExQUFhIUExYSFhIVEhQUFhIUExYSFBQVEhQUFBQVEhYSFBQVEhQUFjYUFBUSFDgUAAUlAAEmlRY2FRIUFBY2FhEUFBQUFhIVEhY2FjYUFBUSFhIUFBQTFhIUFBQTFBQWEhQ3FBQWEhUSFhIWEhUSFjYWNhQ4FBQUExQ4FBQUAAKSFhIUFBQTFBQWEhYRFBQWEhQTFhIWEhQTFBQWEhYRFhIWEhQUExQUFBUSFBQWEhQ4FhEWEhQUFBMWNhQUFBMWEhQADQUAAAAA",
+"JgAkAQABKJUTOBQUFBQUOBQTFBQUFBQTFDgUOBQ4FBQUExQUFBQUExQUFBQTFBQUFBQTOBQUFBQUExQUFBQUExQ4FBQUOBQTFBQUOBQUFAACkhQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBMUFBQUFBQTFBQUFBMUOBQUFDgUAAUkAAEnlRQ3FBQUFBQ4FBMUFBQUFBMUOBQ4FDgUFBMUFBQUFBMUFBQUFBMUFBQUFBM4FBQUFBQTFBQUFBQTFDgUOBQ4FBQUExQ4FBQUAAKSFhIUFBQTFBQUFBQTFBQUFBQUExQUFBQUExQUFBQTFBQUFBQUExQUFBQUExQUFBQ4FBMUFBQUFBMUFBQ4FBQUExQADQUAAAAA",
+"JgAkAQABJpUUOBQTFBQUOBQUExQUFBQTFBQUFBQTFDgUFBQUFBMUFBQUFBMUFBQUFBMUOBQUFBQTFBQUFBQTFBQ4FBQUOBMUFBQUOBQTFAACkxQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUExQUFBQUExQUFBQTFBQUFBQTFBQUFBQTFDgUOBQUFDgUAAUkAAEmlRQ4FBQUFBQ3FBQUFBQTFBQUFBQTFBQUOBQUFBMUFBQUFBMUFBQUExQUFBQ4FBMUFBQUFBMUFBQUFDgTOBQ4FBQUFBQ4ExQUAAKTFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBQUExQUFBQUNxQ4FBQUFBQADQUAAAAA",
+"JgAkAQABJpUVNxQTFhIUOBQTFBQUFBQTFDgUFBQUFTcTFBQUFBQVEhQUFBQTFBQUFBQTOBYSFhIVEhYSFBQWERQ4FhIWNhYRFhIWNhQUFQACkRYSFBQVEhYSFBQVEhYSFhITFBQUFhITFBYSFBQTFBQUFBQTFBYSFBQVEhQUFhEWEhQUFBQVEhYSFBMWEhY2FjYUAAUkAAEnlRU2FhIWEhY2FBMUFBQUFBMWNhYSFBQTOBYSFBQUExYSFBQVEhQUFBQUExY2FhIUFBYRFhIWEhMUFjYWNhY2FhEVExQ4FBQWAAKQFhIVExQTFhIWEhUSFhIWEhUSFBQWEhUSFhIWEhMUFBQUExQUFhIWERYSFhIUExQ4FhIWEhQTFBQWEhUSFjYUFBQADQUAAAAA",
+"JgAkAQABJ5QUOBQUFBQUNxQUFBQUExUTFBQUOBQTFDgUFBQTFBQUFBQTFBQUFBQTFBQUOBQUFRIUFBQUFBMUFBQ4FBQUNxQUFBQUOBQTFAACkxQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUExQUFBQUExQUFBQTFDgUFBQ4FDgUAAUkAAEnlBQ4FBQUFBQ4FBMUFBQUExQUFBQ4FBMUOBQUFBQUExQUFBQUExQUFBQUExQ4FBQUExQUFBQUExQUFDgUOBQ4FBMUFBQ4FRMUAAKSFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUExQUFBQUFBMUFBQUFBQTFBQUFBM4FBQUFBQTFBQUOBQUFDcUFBQADQUAAAAA",
+"JgAkAQABJ5UVNxQUExQUOBQUFBMUFBQUFDgUNxUTFDgUFBQTFBQUFBQTFBQUFBQTFBQUOBQTFBQUFBQTFBQUFBQ4FBMUOBQUFBQTOBQUFAACkxQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBMUFBQUExQUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQVNxQ4FDcUAAUlAAEmlRQ4FBQUExQ4FRMUFBQTFBQUOBQ4FBMUOBQUFBMUFBQVFBMUFBQUFBMUFBQ4FBQUExQUFBQTFBQUFDgUOBQ3FBQUFBQ4FBMUAAKTFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExUTFBQUExQUFBQUExQ4FBQUExQUFBQUExQ4FDgUFBQADQUAAAAA",
+"JgAkAQABJ5UUOBQUFBMUOBQUFBQTFBQUFBQTFBQ4FDgUFBQTFBQUFBQTFBQUFBQTFBQUOBQTFBQUFBQTFBQUFBQ4FBMUOBQUFBMUOBQUFAACkxQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBMUFBQUFBMUFBQUFBMUFDgUOBQ4FDgUAAUkAAEmlRQ4FBQUFBQ3FBQUFBQTFBQUFBQTFDgUOBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBQUExQUFBQUExQUFDgUOBQ4FBMUFBQ4FBMUAAKTFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExUTFBQVEhQUFBQUExQ4FBQUFBQTFBQUOBQ4FDcUFBQADQUAAAAA",
+"JgAkAQABJpUUOBQTFRMUOBQUFBMUFBQUFDcUFBQ4FDgUFBQUFBQUExQUFBQUExQUFBQUOBQTFBQUFBQTFBQUFBM4FBQUOBQUFBMUOBQUFAACkhQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQTAAUlAAEmlRQ4FBQUFBM4FBQUFBQTFBQUOBQUFDcUOBQUFRMUExQUFBQUExQUFBQUExQ4FBQUFBMUFBQUFBMUFDgUOBQ4FBMUFBQ4FBQUAAKSFRMUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFRMUFBQTFBQUFBQ3FBQUFBQTFBQUFBQTFBQUOBQADQUAAAAA",
+"JgAkAQABKJQVNxUSFhIWNhYRFBQUFBQTFBQWNhQ4FDgVEhQUFBQUExQUFBQUExQUFhIVNxUSFBQUFBMUFBQUFBQ3FBQUOBYSFBMUOBQUFAACkhQUFhIUExQUFBQUExQUFBQVExUSFRMVEhYSFBQUExQUFBQUExYSFBQUExQUFBQUExYSFBQUExYSFDgUFBUSFhIWAAUiAAEnlRU2FBQUFBQ4FBMUFBYSFRIWEhY2FTcVNhQUFhIWEhUSFBQWEhUSFBQUFBU2FhIUFBYRFBQUFBYRFjYUOBY2FhIUExY2FBQUAAKRFxIWEhYSExQUFBQUExQWEhQUExQWEhYSFRIUFBYSFRIWEhYSExQWEhUTFBMWEhQ4FRIUFBYSFBMWNhYSFhIUNxQADQUAAAAA")
+        off = "JgAkAQABJpUWEhUSFDgWEhQUFBMWEhQUFRIWNhYSFjYWERQUFhIUExQUFhIWERQUFBQVNxQTFhIWEhQTFBQUFBM4FBQUOBYSFBMUOBQUFAACkhYSFBQUExQUFBQUExQUFBQUExYSFBQVEhYSFBQUExYSFBQUExQUFBQUExQUFBQUExQUFhIUExQ4FBQWERQUFjYUAAUkAAEnlRQTFBQUOBQUExQUFBQUFBMUFBQ4FBMUOBQUFBQUExQUFBQUExQUFBQUExQ4FBQUFBQTFBQUFBMUFDgUOBQ4FBQTFBQ4FBQUAAKSFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQ3FBQUFBQUFBMUFBQUExQUFBQADQUAAAAA"
+        heat = ("JgAkAQABJ5UUFBUSFjYUOBUTFBMUFBQUFRIUFBYSFBMWEhYSFBMUFBQUFRMTFBYSFBMUOBQUFBQWERYSFhIVEhQ4FBQVNxUSFhIUOBQTFAACkxYSFRIUFBYSFBMUFBQUFRIUFBQUFBMUFBQUFBMUFBYSFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBY2FBQTOBY2FhIUAAUkAAEnlRMUFBQUOBQ4FBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUExQUFBQ4FBMUFBQUFBMUFBQUFDgUNxQ4FBQUFBQ4ExQUAAKTFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBMUFBQUFBMUFBQ4FDgUOBQADQUAAAAA",
+"JgAkAQABJpUUFBQTFDgUOBQUFBMUFBQUFDgUExQUFBQUExQUFBQUExQUFBQTFBQUFBQTOBQUFBQUExQUFBQUExQ4FBQUOBQTFBQUOBQUFAACkhQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBY2FDgUOBQ4ExQUAAUlAAEmlRQUExQUOBQ4FBQUExQUFBQUOBMUFBQUFBMUFBQUFBMUFBQUExQUFBQUExQ4FBQUFBQTFBQUFBQTFDgUOBQ4FBQVEhQ4FBQUAAKSFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQ3FhIUFBQTFBQUOBQ4FDgWNhQADQUAAAAA",
+"JgAkAQABJ5UUExQUFDgUOBQUFBMUFBQUFBMUOBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUOBQUFBQUExQUFBQUExQ4FBQUOBQTFBQUOBQUFAACkhQUFBQUExQUFBMVExQUFBMUFBQUFBQTFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBQUExQUFDgUAAUkAAEnlRQTFBQUOBQ4FBMUFBQUFBMUFBQ4FBQTFBQUFBQTFBQUFBMVExQUFBQUExQ4FRMUExQUFBQUExQUFDgUOBQ4FBMUFBQ4FBQUAAKSFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQ4FBQUFBQTFBQUFBMUFBQUFBQADQUAAAAA",
+"JgAkAQABJ5UUExQUFDgUOBQTFBQUFBQTFDgUOBQUFBQTFBQUFBQUExQUFBMVExQUFBQTOBQUFBQUExQUFBQUExQ4FBQUOBQTFBQUOBQUFAACkhQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExUTFBQUExQUFBQUExQUFBQUExQUFBQUExQ4FDgUFBQTFDgUAAUlAAEmlRQUExQUOBQ4FBQUExQUFBQUNxQ4FBQVExQTFBQVExQTFBQUFBQTFBQUFBQ3FBQUFBQTFBQUFBQTFDgUOBQ4FBQUExQ4FBQUAAKSFBQUFBQUExQUFBQTFBQUFBQTFBQUFBQTFBQUFBQUExQUFBQTFBQUFBQTFBQVExQ4FBMUFBQUFBMUOBQUFBQTFBQADQUAAAAA",
+"JgAkAQABJpUUFBQTFDgUOBQUFBMUFBQUFBMUFBQ4FBQUExQUFBQUExQUFBQUExQUFBQUNxQUFBQUExQUFBQUExQ4FBQVNxQUExQUOBQUFAACkhQUFBQUExQUFBQUExQUFBQUExQUFBQTFBQUFBMUFBQUFBQTFBQUFBMUFBQUFBMUFBUTFBQTFBQ4FBQUOBQTFDgUAAUlAAEmlRUSFBQUOBQ4FBMUFBQUFBQTFBQUFDgUExUTFBQUExQUFRMUExQUFBQUExQ4FBQUFBMUFBQUExQUFDgUOBQ4FBMVExQ4FBQUAAKSFBQUFBQTFBQUFBQTFBQUFBMUFBQUFBQTFRMUFBMUFBQUFBMUFBQUFBMUFBQUExQ4FBQUFBQTFBQUFBQ4FBMUFBQADQUAAAAA",
+"JgAkAQABJpUUFBQUFDcUOBQUFBQUExQUFDgUFBQ3FBQVExQTFBQUFBQTFBQUFBQTFBQUOBQUFBMUFBQUFBMUFBQ4FBQUNxQUFBQUOBQTFAACkxQUFBMUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUFBMUFBQUExQUFBQUExQUFBQUExQUFBQ4FDgUNxQUFDgUAAUlAAEmlRQTFBQUOBQ4FBMUFBQUFBMUOBQUFDgUExQUFBQUExQUFBQUExQUFBQUFBQ3FRMUFBQTFBQUFBQTFDgUOBQ4FBQUExQ4FBQUAAKSFBQUFBQTFBQUFBQTFBQUFBUSFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQ4FBMUFBQUFBMUOBQ4FBQUExQADQUAAAAA",
+"JgAkAQABJpUVExQUFDgUOBQTFBQUFBQTFBQUOBQ4FBMUFBQUFBMUFBQUFBMUFBQUFBMUOBQUFBQUExUTFBQTFBQ4FBQUOBQTFBQUOBQTFAACkxQUFBMUFBUTFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBQUExQ4FTcUAAUlAAEmlRQTFBQVNxQ4FBQUExQUFBQTFBQ4FDgUFBQTFBQUFBQTFBQUFBQTFBQUFBQ3FBQUFBQTFBQUFBQTFDgVNxQ4FBQUExQ4FBQUAAKSFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQVExQTFBQUFBQ4FBMUFBUTFBMUFBQUFDcUFBQADQUAAAAA",
+"JgAkAQABJpUUFBQTFDgUOBQUFBMUFBQUFDgUNxQ4FBQUFBQTFBQUFBQTFBQUFBQTFBQUOBQTFBQUFBQUExQUFBQ4FBMUOBQUFBQTOBQUFAACkxQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQ3FDgUFBQ4FDgUAAUkAAEmlRQUFBQUOBQ3FRMUFBQUExQUOBQ4FDgUFBMUFBQUFBMUFBQUExQUFBQUExQ4FBQUFBQTFBQUFBQTFDgUOBQ4FBQUExQ4FBQUAAKSFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQ4FBMUFBQUFBMUOBQUFDgUExQADQUAAAAA",
+"JgAkAQABJ5UUExQUFDgUOBQTFBQUFBQTFBQUFBQTFDgUFBQUFBMUFBQUExQUFBQUExQUOBQUFBMUFBQUFBMUFBQ4FBQUNxQUFBQUOBQTFAACkxQUFBMUFBQUFBMUFBQUFBMUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQTFBQUFBQTFBQUFBQ4FBMUOBQ4FDgUAAUkAAEnlRQTFBQUOBQ4FBMUFBQUFBMUFBUTFBMUOBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBQUExQUFBQUExQUFDgUOBQ4FBMUFBQ4FBMUAAKTFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQ4FBQUFBMUFBQUExQ4FDgUFBQADQUAAAAA",
+"JgAkAQABJpUVExQUFDgUNxQUFBQUExQUFDgUFBQTFDgUFBQUFBMUFBQUExQUFBQTFBQUOBQUFBMUFBQUFBMUFBQ4FBQUNxQUFBQUOBQTFAACkxQUExQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQ4FDcUOBQ4FDgUAAUkAAEnlRQTFBQUOBQ4FBQTFBQUFBMUOBQUFBQUNxQUFBQUExQUFBQUExQUFBQUExQ4FBQUFBQTFBQUFBQTFTcUOBQ4FBQUExQ4FBQUAAKSFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBUSFBQUFBQTFBQUFBQ3FBQUFBQTFBQUOBQ4FDgUExQADQUAAAAA",
+"JgAkAQABJ5UXEBQUFDgUOBQTFBQVExQTFRMUOBUTFDgUExQUFBQUExQUFBQUExQUFBQUNxQUFBQUExQUFBQUExQ4FBQUOBQUExQVNxUTFAACkhQUFBQUExUTFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExU3FBQUFBQTFBQUAAUkAAEnlRQTFBQUOBQ4FBMVExUTFBMUFBQ4FBQUNxQUFBQUFBMUFBQUFBMUFBQUFBQ3FBQUFBQTFRMUFBQTFDgUOBU3FBQUExQ4FBQUAAKSFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQ4FBMVExQUFBMUFBQUExQUOBQADQUAAAAA",
+"JgAkAQABJpUUFBQTFDgUOBQUFBMUFBQUFDgTOBQUFDgUFBQTFBQUFBMUFBQUFBMUFBQUOBQTFBQUFBQTFBQUFBQ4FBMUOBQUFBMUOBQUFAACkxQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBMUFBQUExQUFBQUFBMUFBQUExQUFBQUExQUFBQUExQ4FDgUFBQTFBQUAAUlAAEmlRQTFBQUOBQ4FBQUExQUFBQTOBQ4FBQUOBQTFBQUFBQTFBQUFBQTFBQUFBQ4FBMUFBQUFBMUFBQUFDcUOBQ4FBQUFBQ3FBQUAAKTFBMUFBQUFBMVExQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBMUFBQUFBMUOBQUFBQUNxQADQUAAAAA",
+"JgAkAQABJ5UUExQUFDgUOBQTFBQVExQUExQUFBQ4FDgUExQUFBMUFBQUFBQUExQUFRIUOBUTFBQUExQUFBQUExQ4FBQUOBQTFBQUOBQUFAACkhQUFRMTFBQUFBMUFBQUFBMUFBQUFBQTFBUTFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBQUNxQUFBQUAAUkAAEmlRUTFBQUOBQ4FBMUFBQUFBMUFBQUFDcVNxQUFBQUExQUFBQUExQUFBQUExQ4FBQUFBMUFBQUFBMUFDgUOBQ4FBMUFBQ4FBQUAAKSFBQUFBMUFBQUFBQTFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQUFBQUExQ4FBQUFBQTFBQUFBQ3FRMUOBQADQUAAAAA",
+"JgAkAQABJpUUFBQTFDgUOBQUFBMUFBQUFDgTFBU3FDgUFBQTFRMUFBQTFBQUFBQTFBQUOBQTFBQUFBQUExQUFBQ4FBMUOBQUFBQTOBQUFAACkxQTFBQUFBQTFBQUFBQTFRMUFBQTFBQUFBMUFBQUFBQTFBQUFBQTFBQUExQUFBQUFBMUFBQUFBM4FDgUOBQUFBMUAAUlAAEmlRUTFBMUOBQ4FBQUFBMUFBQUOBQTFDgUOBQUFBMUFBUTFRIUFBQUFBMUFBQ4FBQUExQUFBQUExQUFDgUOBQ4FBMUFBQ4FBMUAAKTFRMUExQUFBQUExQUFBQUExQUFBQUExQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQ4FBQUExQUFBQUOBQ4ExQUOBQADQUAAAAA",
+"JgAkAQABJpUUFBQUFDgUOBQTFBQVExQTFBQUOBQ4FDcUFBQUFBMUFBQUFBMUFBQUFBMUOBQUFBQUExQUFBQUExQ4FBQUOBQTFBQUOBQUFAACkhQUFBMUFBQUFBMUFBQUFBMUFBQUFRIUFBQUFRIUFBQUFBMUFBQUFBMUFBQUFBMUFBQUFBMUFBQ4FBQUExQ4FBQUAAUkAAEmlRQUFRMUOBQ4FBMUFBQUFBMVExU3FDgUOBQTFBQUFBMUFBQUFBMUFBQUFBM4FBQUFBQTFBQUFBQTFDgVNxQ4FBQUExQ4FBQUAAKSFBQUFBQUExQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFBQUFBQTFRMUFBQTFBQVExQ4FBMUFBQUFBMUFBQUFDcUOBQADQUAAAAA")
+
+        if (self._current_operation == 'idle') or (self._current_operation =='off'):
+            sendir = b64decode(off)
+        elif self._current_operation == 'heat':
+            sendir = b64decode(heat[int(self._target_temperature) - self._target_temperature_low])
+        elif self._current_operation == 'cool':
+            sendir = b64decode(cool[int(self._target_temperature) - self._target_temperature_low])
+        else:
+            if self._current_temperature and (self._current_temperature < self._target_temperature_low):
+                sendir = b64decode(heat[int(self._target_temperature) - self._target_temperature_low])
+            else:
+                sendir = b64decode(cool[int(self._target_temperature) - self._target_temperature_low])
+        
+        try:
+            self._device.send_data(sendir)
+        except (socket.timeout, ValueError) as error:
+            if retry < 1:
+                _LOGGER.error(error)
+                return False
+            if not self._auth():
+                return False
+            return self._sendpacket(retry-1)
+        return True
