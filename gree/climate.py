@@ -11,10 +11,10 @@ import socket
 import voluptuous as vol
 
 from homeassistant.core import callback
-from homeassistant.components.climate import (
+from homeassistant.components.climate import (ClimateDevice, PLATFORM_SCHEMA)
+from homeassistant.components.climate.const import (
     ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW, DOMAIN,
-    ClimateDevice, PLATFORM_SCHEMA, STATE_AUTO,
-    STATE_COOL, STATE_HEAT, SUPPORT_TARGET_TEMPERATURE,
+    SUPPORT_TARGET_TEMPERATURE,
     SUPPORT_TARGET_TEMPERATURE_HIGH, SUPPORT_TARGET_TEMPERATURE_LOW,
     SUPPORT_OPERATION_MODE)
 from homeassistant.const import (
