@@ -39,6 +39,8 @@ UPNP_DEFAULT_SERVICE_TYPE = "urn:schemas-upnp-org:service:AVTransport:1"
 
 SCAN_INTERVAL = timedelta(seconds=59)
 
+BLACKLIST_DEVICES=['192.168.31.30']
+
 
 @asyncio.coroutine
 def async_setup(hass, config):
@@ -53,10 +55,11 @@ def async_setup(hass, config):
             None, dlna.discover_MediaPlayer)
 
 
-
         for device in devices:
             isFind = False
             devUUID = device.get('uuid')
+            if device.get('hostname') in BLACKLIST_DEVICES:
+                continue
 
             for regDev in regDevices:
                 regUUID = regDev.get('uuid')
