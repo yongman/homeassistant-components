@@ -211,7 +211,6 @@ class Dlnadriver:
 
         devices_urls = [device["location"] for device in devices if "AVTransport" in device["st"]]
         devices_urls = list(set(devices_urls))
-        _LOGGER.info("dlna devices {}".format(devices_urls))
         devices = []
         for location_url in devices_urls:
             device = self.register_device(location_url)

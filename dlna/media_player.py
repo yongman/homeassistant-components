@@ -119,6 +119,10 @@ class DLNAPlayer(MediaPlayerDevice):
 
             self._media_position_updated_at = dt_util.utcnow()
 
+            # Fix xiaodu can not stop automatically
+            if self._media_duration == self._media_position:
+               self._device.Stop()
+
         mute = self._device.GetMute()
         statusCode = mute.get("status")
         if statusCode == 200:
