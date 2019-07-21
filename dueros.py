@@ -380,6 +380,11 @@ TRANSLATIONS = {
         'TimingTurnOnRequest': 'open_cover',
         'TimingTurnOffRequest': 'close_cover',
     },
+    'fan': {
+        'TurnOnRequest': 'turn_on',
+        'TurnOffRequest': 'turn_off',
+        'SetFanSpeedRequest': lambda state, payload: ('set_speed', {'speed': 'middle' if payload['fanSpeed']['level'] is None else payload['fanSpeed']['level']}),
+    },
     'vacuum': {
         'TurnOnRequest':  'start',
         'TurnOffRequest': 'return_to_base',
@@ -409,7 +414,7 @@ TRANSLATIONS = {
         'TurnOffRequest': 'turn_off',
         'TimingTurnOnRequest': 'turn_on',
         'TimingTurnOffRequest': 'turn_off',
-        'SetModeRequest': lambda state, payload: ('turn_on', {'operation_mode': payload['mode']['value']}),
+        'SetModeRequest': lambda state, payload: ('set_operation_mode', {'operation_mode': payload['mode']['value']}),
         'IncrementTemperatureRequest': lambda state, payload: ('set_temperature', {'temperature': min(state.attributes['max_temp'], state.attributes['temperature'] + state.attributes['target_temp_step'])}),
         'DecrementTemperatureRequest': lambda state, payload: ('set_temperature', {'temperature': max(state.attributes['min_temp'], state.attributes['temperature'] - state.attributes['target_temp_step'])}),
         'SetTemperatureRequest': lambda state, payload: ('set_temperature', {'temperature': min(state.attributes['max_temp'], max(state.attributes['min_temp'], payload['targetTemperature']['value']))})
@@ -465,7 +470,7 @@ def guessAction(entity_id, attributes):
     elif entity_id.startswith('sensor.'):
         actions = ["getTemperatureReading", "getHumidity"]
     elif entity_id.startswith('climate.'):
-        actions = ["turnOn", "turnOff", "incrementTemperature", "decrementTemperature", "setTemperature"]
+        actions = ["turnOn", "turnOff", "incrementTemperature", "decrementTemperature", "setTemperature", "setMode"]
     else:
         actions = ["turnOn", "timingTurnOn", "turnOff", "timingTurnOff"]
 

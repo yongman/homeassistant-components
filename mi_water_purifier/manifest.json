@@ -1,0 +1,8 @@
+{
+        "domain": "mi_water_purifier",
+        "name": "mi_water_purifier",
+        "documentation": "",
+        "requirements": [],
+        "dependencies": [],
+        "codeowners": ["@noname"]
+}

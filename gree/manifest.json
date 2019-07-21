@@ -1,0 +1,8 @@
+{
+        "domain": "gree",
+        "name": "gree",
+        "documentation": "",
+        "requirements": [],
+        "dependencies": [],
+        "codeowners": ["@noname"]
+}
