@@ -1,5 +1,5 @@
 """
-GREE空调 BY 菲佣 1.0
+GREE
 """
 from datetime import timedelta
 from base64 import b64encode, b64decode
@@ -10,13 +10,15 @@ import socket
 
 import voluptuous as vol
 
+from typing import List, Optional
+
 from homeassistant.core import callback
-from homeassistant.components.climate import (ClimateDevice, PLATFORM_SCHEMA)
+from homeassistant.components.climate import (ClimateEntity, PLATFORM_SCHEMA)
 from homeassistant.components.climate.const import (
     ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW, DOMAIN,
-    SUPPORT_TARGET_TEMPERATURE,
-    SUPPORT_TARGET_TEMPERATURE_HIGH, SUPPORT_TARGET_TEMPERATURE_LOW,
-    SUPPORT_OPERATION_MODE)
+    SUPPORT_TARGET_TEMPERATURE, SUPPORT_TARGET_TEMPERATURE_RANGE,
+    SUPPORT_TARGET_HUMIDITY,
+    HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO, HVAC_MODE_DRY)
 from homeassistant.const import (
     TEMP_CELSIUS, TEMP_FAHRENHEIT, ATTR_TEMPERATURE, ATTR_UNIT_OF_MEASUREMENT,
     CONF_NAME, CONF_HOST, CONF_MAC, CONF_TIMEOUT)
@@ -44,7 +46,7 @@ CONF_DEFAULT_OPERATION = 'default_operation'
 CONF_TARGET_TEMP = 'target_temp'
 devtype = 0x2712
 
-SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_OPERATION_MODE)
+SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_TARGET_TEMPERATURE_RANGE | SUPPORT_TARGET_HUMIDITY)
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_HOST): cv.string,
@@ -81,7 +83,7 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
             broadlink_device, sensor_entity_id)])
 
 
-class DemoClimate(ClimateDevice):
+class DemoClimate(ClimateEntity):
     """Representation of a demo climate device."""
 
     def __init__(self, hass, name, target_temperature, target_humidity,
@@ -243,6 +245,25 @@ class DemoClimate(ClimateDevice):
     def fan_list(self):
         """Return the list of available fan modes."""
         return self._fan_list
+
+    @property
+    def hvac_mode(self) -> str:
+        """Return hvac operation ie. heat, cool mode.
+        Need to be one of HVAC_MODE_*.
+        """
+        return self._current_operation
+
+    @property
+    def hvac_modes(self) -> List[str]:
+        """Return the list of available hvac operation modes.
+        Need to be a subset of HVAC_MODES.
+        """
+        return [HVAC_MODE_AUTO, HVAC_MODE_HEAT, HVAC_MODE_OFF, HVAC_MODE_COOL]
+
+    def set_hvac_mode(self, hvac_mode):
+        self._current_operation = hvac_mode
+        self._sendpacket()
+        self.schedule_update_ha_state()
 
     def set_temperature(self, **kwargs):
         """Set new target temperatures."""
