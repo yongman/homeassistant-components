@@ -281,7 +281,13 @@ class DemoClimate(ClimateEntity):
             self._current_operation = 'off'
             self._target_temperature = self._target_temperature_high
         elif self._current_temperature and (self._current_operation == "off" or self._current_operation == "idle"):
-            self.set_operation_mode('auto')
+
+            default_op = self.hass.states.get(self._current_operation_select)
+            _LOGGER.info('default current operation is {}'.format(default_op.state))
+            op = 'auto'
+            if default_op is None:
+                op = default_op.state
+            self.set_operation_mode(op)
             return
 
         self._sendpacket()
