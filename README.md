@@ -6,3 +6,4 @@
 3. 小米净水机传感器接入
 4. caiyun天气
 5. 小度音箱dlna方式接入，使用baidu的tts
+6. baidu人脸识别插件
