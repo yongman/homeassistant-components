@@ -285,7 +285,7 @@ class DemoClimate(ClimateEntity):
             default_op = self.hass.states.get(self._current_operation_select)
             _LOGGER.info('default current operation is {}'.format(default_op.state))
             op = 'auto'
-            if default_op is None:
+            if default_op is not None:
                 op = default_op.state
             self.set_operation_mode(op)
             return

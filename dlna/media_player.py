@@ -14,7 +14,7 @@ from homeassistant.components.media_player.const import (
     SUPPORT_PLAY_MEDIA, SUPPORT_VOLUME_MUTE, SUPPORT_VOLUME_SET, SUPPORT_STOP,
     SUPPORT_TURN_OFF, SUPPORT_PLAY, SUPPORT_VOLUME_STEP, MEDIA_TYPE_MUSIC)
 from homeassistant.components.media_player import (
-    MediaPlayerDevice, PLATFORM_SCHEMA)
+    MediaPlayerEntity, PLATFORM_SCHEMA)
 from homeassistant.const import (
     STATE_IDLE, STATE_OFF, STATE_PAUSED, STATE_PLAYING)
 
@@ -37,7 +37,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         DLNAPlayer(hass,device),
     ])
 
-class DLNAPlayer(MediaPlayerDevice):
+class DLNAPlayer(MediaPlayerEntity):
     """DLNA Device"""
 
     def __init__(self,hass,device):
