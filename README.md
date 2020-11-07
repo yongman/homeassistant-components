@@ -7,3 +7,6 @@
 4. caiyun天气
 5. 小度音箱dlna方式接入，使用baidu的tts
 6. baidu人脸识别插件
+7. bwm connector，宝马接入homeassistant，可以设置一些状态提醒或高级自动化
+8. device_tracker更换高德地图，支持gps坐标偏移
+
