@@ -241,7 +241,8 @@ def queryDevice(name, payload):
     elif entity_id.startswith('sensor.humidity'):
         # 湿度传感器
         state = _hass.states.get(entity_id)
-        return {'humidity': {'value': state.state}}
+        #return {'humidity': {'value': state.state, 'scale': '%'}}
+        return {'attributes': [{'name': 'humidity', 'value': state.state, 'scale': '%',}]}
     elif entity_id.startswith('sensor.filtered_water'):
         state = _hass.states.get(entity_id)
         return {'ppm': {'value': float(state.state)*1.0, 'scale': '毫克每升'}}
