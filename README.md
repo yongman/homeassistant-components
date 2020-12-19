@@ -9,4 +9,4 @@
 6. baidu人脸识别插件
 7. bwm connector，宝马接入homeassistant，可以设置一些状态提醒或高级自动化
 8. device_tracker更换高德地图，支持gps坐标偏移
-
+9. 修改mqtt组件，增加德业除湿机switch组件
