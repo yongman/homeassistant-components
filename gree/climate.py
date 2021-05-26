@@ -47,14 +47,13 @@ DEFAULT_STEP = 1
 CONF_SENSOR = 'target_sensor'
 CONF_DEFAULT_OPERATION = 'default_operation'
 CONF_TARGET_TEMP = 'target_temp'
+CONF_RM = 'rm_entity'
 devtype = 0x2712
 
 SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_TARGET_HUMIDITY | SUPPORT_FAN_MODE)
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
-    vol.Required(CONF_HOST): cv.string,
-    vol.Required(CONF_MAC): cv.string,
-    vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): cv.positive_int,
+    vol.Required(CONF_RM): cv.string,
     vol.Required(CONF_SENSOR): cv.entity_id,
     vol.Optional(CONF_DEFAULT_OPERATION): cv.entity_id,
     vol.Optional(CONF_TARGET_TEMP): vol.Coerce(float)
@@ -63,27 +62,17 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 @asyncio.coroutine
 def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
     """Set up the generic thermostat platform."""
-    import broadlink
-    ip_addr = config.get(CONF_HOST)
-    mac_addr = binascii.unhexlify(
-        config.get(CONF_MAC).encode().replace(b':', b''))
+    rm_entity = config.get(CONF_RM)
 
     name = config.get(CONF_NAME)
     sensor_entity_id = config.get(CONF_SENSOR)
     default_operation_select = config.get(CONF_DEFAULT_OPERATION)
     target_temp = config.get(CONF_TARGET_TEMP)
 
-    broadlink_device = broadlink.rm((ip_addr, 80), mac_addr, None)
-    broadlink_device.timeout = config.get(CONF_TIMEOUT)
-    try:
-        broadlink_device.auth()
-    except socket.timeout:
-        _LOGGER.error("Failed to connect to device")
-
     async_add_devices([DemoClimate(
             hass, name, target_temp, None, None, None, 'auto', None,
             None, 'off', default_operation_select, None, DEFAULT_MAX_TMEP, DEFAULT_MIN_TMEP, 
-            broadlink_device, sensor_entity_id)])
+            rm_entity, sensor_entity_id)])
 
 
 class DemoClimate(ClimateEntity):
@@ -93,7 +82,7 @@ class DemoClimate(ClimateEntity):
                 away, hold, current_fan_mode, current_humidity,
                 current_swing_mode, current_operation, operation_select, aux,
                 target_temp_high, target_temp_low,
-                broadlink_device, sensor_entity_id):
+                rm_entity, sensor_entity_id):
                  
         """Initialize the climate device."""
         self.hass = hass
@@ -120,7 +109,7 @@ class DemoClimate(ClimateEntity):
         self._unit_of_measurement = TEMP_CELSIUS
         self._current_temperature = None
 
-        self._device = broadlink_device
+        self._device = rm_entity
 
         async_track_state_change(
             hass, sensor_entity_id, self._async_sensor_changed)
@@ -367,45 +356,37 @@ class DemoClimate(ClimateEntity):
         self._sendpacket()
         self.schedule_update_ha_state()
     
-    def _auth(self, retry=2):
-        try:
-            auth = self._device.auth()
-        except socket.timeout:
-            auth = False
-        if not auth and retry > 0:
-            return self._auth(retry-1)
-        return auth    
-
     def _sendpacket(self,retry=2):
         """Send packet to device."""
         if (self._current_operation == 'idle') or (self._current_operation =='off'):
-            sendir = b64decode(PACKET_OFF)
+            sendir = 'b64:' + PACKET_OFF
         elif self._current_operation == 'heat':
-            sendir = b64decode(PACKET_HEAT[int(self._target_temperature) - self._target_temperature_low])
+            sendir = 'b64:' + PACKET_HEAT[int(self._target_temperature) - self._target_temperature_low]
         elif self._current_operation == 'cool':
             if self._current_fan_mode == 'silent':
-                sendir = b64decode(PACKET_COOL_SILENT[int(self._target_temperature) - self._target_temperature_low])
+                sendir = 'b64:' + PACKET_COOL_SILENT[int(self._target_temperature) - self._target_temperature_low]
             elif self._current_fan_mode == 'auto':
-                sendir = b64decode(PACKET_COOL_AUTO[int(self._target_temperature) - self._target_temperature_low])
+                sendir = 'b64:' + PACKET_COOL_AUTO[int(self._target_temperature) - self._target_temperature_low]
         elif self._current_operation == 'fan':
-            sendir = b64decode(PACKET_FAN)
+            sendir = 'b64:' + PACKET_FAN
         elif self._current_operation == 'dehumidification':
-            sendir = b64decode(PACKET_DEHUMIDIFICATION[int(self._target_temperature) - self._target_temperature_low])
+            sendir = 'b64:' + PACKET_DEHUMIDIFICATION[int(self._target_temperature) - self._target_temperature_low]
         else:
             if self._current_temperature and (self._current_temperature < self._target_temperature):
-                sendir = b64decode(PACKET_HEAT[int(self._target_temperature) - self._target_temperature_low])
+                sendir = 'b64:' + PACKET_HEAT[int(self._target_temperature) - self._target_temperature_low]
             else:
                 if self._current_fan_mode == 'silent':
-                    sendir = b64decode(PACKET_COOL_SILENT[int(self._target_temperature) - self._target_temperature_low])
+                    sendir = 'b64:' + PACKET_COOL_SILENT[int(self._target_temperature) - self._target_temperature_low]
                 elif self._current_fan_mode == 'auto':
-                    sendir = b64decode(PACKET_COOL_AUTO[int(self._target_temperature) - self._target_temperature_low])
+                    sendir = 'b64:' + PACKET_COOL_AUTO[int(self._target_temperature) - self._target_temperature_low]
         try:
-            self._device.send_data(sendir)
+            self.hass.services.call('remote', 'send_command', {
+                'entity_id': self._device,
+                'command': sendir,
+                }, False)
         except (socket.timeout, ValueError) as error:
             if retry < 1:
                 _LOGGER.error(error)
-                return False
-            if not self._auth():
                 return False
             return self._sendpacket(retry-1)
         return True
