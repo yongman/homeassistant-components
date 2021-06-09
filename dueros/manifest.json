@@ -1,0 +1,9 @@
+{
+        "domain": "dueros",
+		"version": "0.0.1",
+        "name": "dueros",
+        "documentation": "",
+        "requirements": [],
+        "dependencies": [],
+        "codeowners": ["@noname"]
+}

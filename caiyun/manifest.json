@@ -1,6 +1,7 @@
 {
         "domain": "caiyun",
         "name": "caiyun",
+		"version": "0.0.1",
         "documentation": "",
         "requirements": [],
         "dependencies": [],

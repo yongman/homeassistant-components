@@ -1,11 +1,15 @@
 """Return repository information if any."""
 import json
 
-from aiogithubapi import AIOGitHubAPIException, GitHub
+from aiogithubapi import AIOGitHubAPIException, GitHub, AIOGitHubAPINotModifiedException
 
-from custom_components.hacs.helpers.classes.exceptions import HacsException
+from custom_components.hacs.helpers.classes.exceptions import (
+    HacsException,
+    HacsNotModifiedException,
+)
 from custom_components.hacs.helpers.functions.template import render_template
 from custom_components.hacs.share import get_hacs
+from custom_components.hacs.const import HACS_GITHUB_API_HEADERS
 
 
 def info_file(repository):
@@ -32,20 +36,30 @@ async def get_info_md_content(repository):
             return ""
         info = info.content.replace("<svg", "<disabled").replace("</svg", "</disabled")
         return render_template(info, repository)
-    except (AIOGitHubAPIException, Exception):  # pylint: disable=broad-except
+    except (
+        ValueError,
+        AIOGitHubAPIException,
+        Exception,  # pylint: disable=broad-except
+    ):
         if repository.hacs.system.action:
             raise HacsException("::error:: No info file found")
     return ""
 
 
-async def get_repository(session, token, repository_full_name):
+async def get_repository(session, token, repository_full_name, etag=None):
     """Return a repository object or None."""
     try:
-        github = GitHub(token, session)
-        repository = await github.get_repo(repository_full_name)
-        return repository
-    except (AIOGitHubAPIException, Exception) as exception:
-        raise HacsException(exception)
+        github = GitHub(
+            token,
+            session,
+            headers=HACS_GITHUB_API_HEADERS,
+        )
+        repository = await github.get_repo(repository_full_name, etag)
+        return repository, github.client.last_response.etag
+    except AIOGitHubAPINotModifiedException as exception:
+        raise HacsNotModifiedException(exception) from exception
+    except (ValueError, AIOGitHubAPIException, Exception) as exception:
+        raise HacsException(exception) from exception
 
 
 async def get_tree(repository, ref):
@@ -53,7 +67,7 @@ async def get_tree(repository, ref):
     try:
         tree = await repository.get_tree(ref)
         return tree
-    except AIOGitHubAPIException as exception:
+    except (ValueError, AIOGitHubAPIException) as exception:
         raise HacsException(exception)
 
 
@@ -62,7 +76,7 @@ async def get_releases(repository, prerelease=False, returnlimit=5):
     try:
         releases = await repository.get_releases(prerelease, returnlimit)
         return releases
-    except AIOGitHubAPIException as exception:
+    except (ValueError, AIOGitHubAPIException) as exception:
         raise HacsException(exception)
 
 
@@ -82,7 +96,7 @@ def read_hacs_manifest():
     hacs = get_hacs()
     content = {}
     with open(
-        f"{hacs.system.config_path}/custom_components/hacs/manifest.json"
+        f"{hacs.core.config_path}/custom_components/hacs/manifest.json"
     ) as manifest:
         content = json.loads(manifest.read())
     return content

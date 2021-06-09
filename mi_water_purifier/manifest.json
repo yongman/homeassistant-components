@@ -1,6 +1,7 @@
 {
         "domain": "mi_water_purifier",
         "name": "mi_water_purifier",
+		"version": "0.0.1",
         "documentation": "",
         "requirements": [],
         "dependencies": [],
