@@ -58,12 +58,11 @@ class ChainSo(object):
 
             _LOGGER.debug("Response from chain.so: %s", response.status)
             data = yield from response.json()
-            _LOGGER.debug(data)
+            if data['status'] == 'success':
+                self.data['price'] = data['data']
         except (asyncio.TimeoutError, aiohttp.ClientError):
             _LOGGER.error("Can not load data from chain.so")
 
-        if data['status'] == 'success':
-            self.data['price'] = data['data']
 
         # async_get_address_received_data
         url = '{}/{}/{}/{}'.format(
@@ -75,7 +74,6 @@ class ChainSo(object):
 
             _LOGGER.debug("Response from chain.so: %s", response.status)
             data = yield from response.json()
-            _LOGGER.debug(data)
         except (asyncio.TimeoutError, aiohttp.ClientError):
             _LOGGER.error("Can not load data from chain.so")
 
@@ -92,7 +90,6 @@ class ChainSo(object):
 
             _LOGGER.debug("Response from chain.so: %s", response.status)
             data = yield from response.json()
-            _LOGGER.debug(data)
         except (asyncio.TimeoutError, aiohttp.ClientError):
             _LOGGER.error("Can not load data from chain.so")
 
@@ -106,7 +103,6 @@ class ChainSo(object):
                 response = yield from self._session.get(url)
             _LOGGER.debug("Response from unmineable.com: %s", response.status)
             data = yield from response.json()
-            _LOGGER.info(data)
         except (asyncio.TimeoutError, aiohttp.ClientError):
             _LOGGER.error("Can not load data from unmineable.com")
         

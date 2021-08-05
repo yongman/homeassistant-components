@@ -1,0 +1,8 @@
+{
+  "domain": "eastmoney",
+  "name": "eastmoney",
+  "dependencies": [],
+  "codeowners": ["@noname"],
+  "requirements": [],
+  "version": "1.0.0"
+}
