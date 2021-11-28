@@ -91,7 +91,7 @@ class EastmoneySensor(Entity):
     @property
     def unit_of_measurement(self):
         """Return the unit of measurement of this entity, if any."""
-        return ''
+        return '%'
 
     @property
     def device_state_attributes(self):
@@ -213,7 +213,7 @@ class EastmoneyData(object):
                 if last_trading_day.day == enav_time.day or real_enav_time.day != enav_time.day:
                     real_enav_value = nav_value
             enav_growth = round(real_enav_value - nav_value, 4)
-            enav_rate = str(round(enav_growth * 100 / nav_value, 2)) + '%'
+            enav_rate = round(enav_growth * 100 / nav_value, 2)
 
             last_nav_rate = nav[2]
             last_nav_rate_value = float(last_nav_rate[0:-1])
