@@ -22,9 +22,28 @@ Thanks to all
 #pylint: disable=unused-argument, unused-variable
 #pylint: disable=too-many-instance-attributes, too-many-lines
 
-VERSION = '2.4.2'
+VERSION = '2.4.7'
 
 '''
+v2.4.7 (12/27/2011)
+1. Fixes a Waze Route Tracking issue where no information or an error was reported from Waze Servers. This was caused by a variable name change on the Waze side.
+
+v2.4.6 (10/11/2021)
+1. Changed the icon for zones from mdi:cellphone-iphone to mdi:cellphone because of Home Assistant mdi update.
+2. Changed the sensor state values for Travel Time, Distance, Next Update Time, etc. from an empty field to a value to address a Lovelace display change. The fields that were empty were not alligned with the field next to them. Travel Time will now display 0 min when in a zone. Other fields will display '___' when empty.
+
+v2.4.5 (10/5/2021)
+1. Fixed a problem where the Waze Route Calculator was being disabled and the distance method-calc was being used. I think the problem started when the WazeRouteCalculator module in the Home Assistant standard Python library was updated.
+
+v2.4.4 (9/25/2021)
+1. Coordindated update with pyicloud_ic3.py to support Apple iCloud url changes to access iCloud+ for location & device info for Find-my-Friends tracking method.
+
+v2.4.3a (9/2/2021)
+1. An undefined variable 'invalid_code_text' was displayed after entering an invalid iCloud account verification code or taking to long to enter it. This has been corrected.
+
+V2.4.3 (7/30/2001)
+1. Added sensor '[devicename]_travel_time_min' -- This is the unformatted waze travel time in minutes. It can be included or excluded using the 'mtim' code.
+
 v2.4.2 (4/20/2021)
 1. Added AU to the list of valid Waze regions.
 
@@ -74,7 +93,7 @@ HA_DEVICE_TRACKER_LEGACY_MODE = False
 
 #Vailidate that Waze is available and can be used
 try:
-    import WazeRouteCalculator
+    from .waze_route_calc_ic3 import WazeRouteCalculator, WRCError
     WAZE_IMPORT_SUCCESSFUL = True
 except ImportError:
     WAZE_IMPORT_SUCCESSFUL = False
@@ -141,6 +160,7 @@ CONF_LOG_LEVEL                  = 'log_level'
 CONF_CONFIG_IC3_FILE_NAME       = 'config_ic3_file_name'
 CONF_LEGACY_MODE                = 'legacy_mode'
 CONF_EVENT_LOG_CARD_DIRECTORY   = 'event_log_card_directory'
+CONF_EVENT_LOG_CARD_FILENAME    = 'event_log_card_filename'
 CONF_DISPLAY_TEXT_AS            = 'display_text_as'
 CONF_TEST_PARAMETER             = 'test_parameter'
 CONF_ZONE                       = 'zone'
@@ -195,6 +215,7 @@ ATTR_ZONE_DISTANCE              = 'zone_distance'
 ATTR_CALC_DISTANCE              = 'calc_distance'
 ATTR_WAZE_DISTANCE              = 'waze_distance'
 ATTR_WAZE_TIME                  = 'travel_time'
+ATTR_WAZE_TIME_MIN              = 'travel_time_min'
 ATTR_DIR_OF_TRAVEL              = 'dir_of_travel'
 ATTR_TRAVEL_DISTANCE            = 'travel_distance'
 ATTR_DEVICE_STATUS              = 'device_status'
@@ -293,7 +314,7 @@ TRACE_ATTRS_BASE = {
         ATTR_INTERVAL: 0,
         ATTR_DIR_OF_TRAVEL: '',
         ATTR_TRAVEL_DISTANCE: 0,
-        ATTR_WAZE_DISTANCE: '',
+        ATTR_WAZE_DISTANCE: ' ',
         ATTR_CALC_DISTANCE: 0,
         ATTR_LAST_LOCATED: '',
         ATTR_LAST_UPDATE_TIME: '',
@@ -334,6 +355,7 @@ SENSOR_DEVICE_ATTRS = [
         'calc_distance',
         'waze_distance',
         'travel_time',
+        'travel_time_min',
         'dir_of_travel',
         'interval',
         'info',
@@ -363,6 +385,8 @@ SENSOR_ATTR_FORMAT = {
         ATTR_LAST_LOCATED: 'timestamp-time',
         ATTR_LAST_UPDATE_TIME: 'timestamp-time',
         ATTR_NEXT_UPDATE_TIME: 'timestamp-time',
+        ATTR_WAZE_TIME: 'min',
+        ATTR_WAZE_TIME_MIN: 'min',
         }
 
 #---- iPhone Device Tracker Attribute Templates -----
@@ -381,6 +405,7 @@ SENSOR_ATTR_FNAME = {
         'calc_distance': 'Calc Dist',
         'waze_distance': 'Waze Dist',
         'travel_time': 'Travel Time',
+        'travel_time_min': 'Travel Time',
         'dir_of_travel': 'Direction',
         'interval': 'Interval',
         'info': 'Info',
@@ -407,7 +432,7 @@ SENSOR_ATTR_ZONE_FNAME = {
 }
 
 SENSOR_ATTR_ICON = {
-        'zone': 'mdi:cellphone-iphone',
+        'zone': 'mdi:cellphone',
         'last_zone': 'mdi:map-clock-outline',
         'base_zone': 'mdi:map-clock',
         'zone_timestamp': 'mdi:clock-in',
@@ -415,6 +440,7 @@ SENSOR_ATTR_ICON = {
         'calc_distance': 'mdi:map-marker-distance',
         'waze_distance': 'mdi:map-marker-distance',
         'travel_time': 'mdi:clock-outline',
+        'travel_time_min': 'mdi:clock-outline',
         'dir_of_travel': 'mdi:compass-outline',
         'interval': 'mdi:clock-start',
         'info': 'mdi:information-outline',
@@ -450,6 +476,7 @@ SENSOR_ID_NAME_LIST = {
         'wdis': 'waze_distance',
         'tdis': 'travel_distance',
         'ttim': 'travel_time',
+        'mtim': 'travel_time_min',
         'dir': 'dir_of_travel',
         'intvl':  'interval',
         'lloc': 'last_located',
@@ -732,6 +759,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_ENTITY_REGISTRY_FILE): cv.string,
     vol.Optional(CONF_CONFIG_IC3_FILE_NAME, default=''): cv.string,
     vol.Optional(CONF_EVENT_LOG_CARD_DIRECTORY, default='www/custom_cards'): cv.string,
+    vol.Optional(CONF_EVENT_LOG_CARD_FILENAME, default='icloud3-event-log-card.js'): cv.string,
     vol.Optional(CONF_LEGACY_MODE, default=False): cv.boolean,
     vol.Optional(CONF_DISPLAY_TEXT_AS, default=[]): vol.All(cv.ensure_list, [cv.string]),
 
@@ -797,6 +825,7 @@ DEFAULT_CONFIG_VALUES = {
 
     CONF_LOG_LEVEL: '',
     CONF_EVENT_LOG_CARD_DIRECTORY: 'www/custom_cards',
+    CONF_EVENT_LOG_CARD_FILENAME: 'icloud3-event-log-card.js',
     CONF_DISPLAY_TEXT_AS: [],
     }
 
@@ -925,6 +954,7 @@ def setup_scanner(hass, config: dict, see, discovery_info=None):
     config_parameter[CONF_ENTITY_REGISTRY_FILE]     = config.get(CONF_ENTITY_REGISTRY_FILE)
     config_parameter[CONF_CONFIG_IC3_FILE_NAME]     = config.get(CONF_CONFIG_IC3_FILE_NAME)
     config_parameter[CONF_EVENT_LOG_CARD_DIRECTORY] = config.get(CONF_EVENT_LOG_CARD_DIRECTORY)
+    config_parameter[CONF_EVENT_LOG_CARD_FILENAME]  = config.get(CONF_EVENT_LOG_CARD_FILENAME)
     config_parameter[CONF_TRACK_DEVICES]            = config.get(CONF_TRACK_DEVICES) or []
     config_parameter[CONF_DEVICES]                  = config.get(CONF_DEVICES) or []
     config_parameter[CONF_DISPLAY_TEXT_AS]          = config.get(CONF_DISPLAY_TEXT_AS)
@@ -1053,6 +1083,7 @@ class Icloud3:#(DeviceScanner):
         self.see                          = see
         self.polling_5_sec_loop_running   = False
         self.api                          = None
+        self.WazeRouteCalc                = None        # WazeRouteCalculator object
         self.base_zone                    = HOME
         self.verification_inprocess_flag  = False
         self.verification_code            = None
@@ -1264,6 +1295,9 @@ class Icloud3:#(DeviceScanner):
                         event_msg = (f"iOS App location requests sent to > {self._format_fname_devicename(devicename)} > "
                                      f"{self._format_list(self.notify_iosapp_entity.get(devicename))}")
                         self._save_event_halog_info("*", event_msg)
+
+                        db=(f"1290 {devicename} {self.notify_iosapp_entity=}")
+                        self._save_event_halog_info("*", db)
 
                         #Send a message to all devices during startup
                         if self.broadcast_msg != '':
@@ -3314,10 +3348,18 @@ class Icloud3:#(DeviceScanner):
     #       when you are real close to home. When home is reached,
     #       the distance will be 0.
 
-            waze_time_msg = ""
-            calc_interval = round(self._km_to_mi(dist_from_zone_km) / 1.5) * 60
+            waze_time_msg = ''
+            try:
+                calc_interval = round(self._km_to_mi(dist_from_zone_km) / 1.5) * 60
+            except:
+                calc_interval = 0
+
             if self.waze_status == WAZE_USED:
-                waze_interval = round(waze_time_from_zone * 60 * self.travel_time_factor , 0)
+                try:
+                    waze_interval = round(waze_time_from_zone * 60 * self.travel_time_factor , 0)
+                except:
+                    waze_interval = 0
+
             else:
                 waze_interval = 0
             interval = 15
@@ -3788,9 +3830,11 @@ class Icloud3:#(DeviceScanner):
             attrs[ATTR_LAST_UPDATE_TIME]  = self._secs_to_timestamp(self.this_update_secs)
             attrs[ATTR_LAST_LOCATED]      = self._secs_to_timestamp(last_located_secs)
             attrs[ATTR_NEXT_UPDATE_TIME]  = self._secs_to_timestamp(next_poll)
-            attrs[ATTR_WAZE_TIME]     = ''
+            attrs[ATTR_WAZE_TIME]         = 0
+            attrs[ATTR_WAZE_TIME_MIN]     = 0
             if self.waze_status == WAZE_USED:
                 attrs[ATTR_WAZE_TIME]     = waze_time_msg
+                attrs[ATTR_WAZE_TIME_MIN] = waze_time_from_zone
                 attrs[ATTR_WAZE_DISTANCE] = self._km_to_mi(waze_dist_from_zone_km)
             elif self.waze_status == WAZE_NOT_USED:
                 attrs[ATTR_WAZE_DISTANCE] = 'NotUsed'
@@ -3798,20 +3842,20 @@ class Icloud3:#(DeviceScanner):
                 attrs[ATTR_WAZE_DISTANCE] = 'NoData'
             elif self.waze_status == WAZE_OUT_OF_RANGE:
                 if waze_dist_from_zone_km < 1:
-                    attrs[ATTR_WAZE_DISTANCE] = ''
+                    attrs[ATTR_WAZE_DISTANCE] = 0
                 elif waze_dist_from_zone_km < self.waze_min_distance:
                     attrs[ATTR_WAZE_DISTANCE] = 'DistLow'
                 else:
                     attrs[ATTR_WAZE_DISTANCE] = 'DistHigh'
             elif dir_of_travel == 'in_zone':
-                attrs[ATTR_WAZE_DISTANCE] = ''
+                attrs[ATTR_WAZE_DISTANCE] = 0
             elif self.waze_status == WAZE_PAUSED:
                 attrs[ATTR_WAZE_DISTANCE] = PAUSED
             elif waze_dist_from_zone_km > 0:
                 attrs[ATTR_WAZE_TIME]     = waze_time_msg
                 attrs[ATTR_WAZE_DISTANCE] = self._km_to_mi(waze_dist_from_zone_km)
             else:
-                attrs[ATTR_WAZE_DISTANCE] = ''
+                attrs[ATTR_WAZE_DISTANCE] = 0
 
             attrs[ATTR_ZONE_DISTANCE]   = self._km_to_mi(dist_from_zone_km)
             attrs[ATTR_CALC_DISTANCE]   = self._km_to_mi(calc_dist_from_zone_km)
@@ -3828,7 +3872,7 @@ class Icloud3:#(DeviceScanner):
             attrs[ATTR_INFO] = interval_debug_msg + info_msg
 
             #save for event log
-            if type(waze_time_msg) != str: waze_time_msg = ''
+            if type(waze_time_msg) != str: waze_time_msg = '0 mi'
             self.last_tavel_time[devicename_zone]   = waze_time_msg
             self.last_distance_str[devicename_zone] = (f"{self._km_to_mi(dist_from_zone_km)} {self.unit_of_measurement}")
             self._trace_device_attributes(devicename, 'RESULTS', fct_name, attrs)
@@ -3836,13 +3880,15 @@ class Icloud3:#(DeviceScanner):
             zone = self.zone_current.get(devicename)
 
             event_msg = (f"Results: From-{self.zone_to_display.get(self.base_zone)} > CurrZone-"
-                         f"{self.zone_to_display.get(zone)}, ")
-            event_msg +=(f"GPS-{format_gps(latitude, longitude, gps_accuracy)}, "
+                         f"{self.zone_to_display.get(zone)}, "
+                         f"GPS-{format_gps(latitude, longitude, gps_accuracy)}, "
                          f"Interval-{interval_str} ({interval_method}), ")
             #event_msg +=(f" ({interval_method}), ") if self.log_debug_flag else ", "
-            event_msg +=(f"Dist-{self._km_to_mi(dist_from_zone_km)} {self.unit_of_measurement}, "
-                         f"TravTime-{waze_time_msg} ({dir_of_travel}), "
-                         f"NextUpdt-{self._secs_to_time(next_poll)}, "
+            if dist_from_zone_km > 0:
+                event_msg +=(f"Dist-{self._km_to_mi(dist_from_zone_km)} {self.unit_of_measurement}, ")
+            if waze_time_msg != '0 min':
+                event_msg +=(f"TravTime-{waze_time_msg} ({dir_of_travel}), ")
+            event_msg += (f"NextUpdt-{self._secs_to_time(next_poll)}, "
                          f"LocationTime-{self._time_to_12hrtime(location_time)} ({location_age_str}), "
                          f"OldLocThreshold-{old_location_secs_msg}")
             if battery10_flag:
@@ -4588,7 +4634,7 @@ class Icloud3:#(DeviceScanner):
         'authenticated': '03/13/19, 9:47:26',
         'tracked_devices': 'gary_icloud/gary_iphone, gary_icloud/lillian_iphone',
         'group': 'gary_icloud', 'friendly_name': 'Gary',
-        'icon': 'mdi:cellphone-iphone',
+        'icon': 'mdi:cellphone',
         'entity_picture': '/local/gary-caller_id.png'}
         """
 
@@ -5470,6 +5516,8 @@ class Icloud3:#(DeviceScanner):
                             sensor_attrs[CONF_UNIT_OF_MEASUREMENT] = ''
                     elif format_type == '%':
                         sensor_attrs[CONF_UNIT_OF_MEASUREMENT] = '%'
+                    elif format_type == 'min' and instr(state_value, 'min') is False and instr(state_value, 'hr') is False:
+                        sensor_attrs[CONF_UNIT_OF_MEASUREMENT] = 'min'
                     elif format_type == 'title':
                         state_value = state_value.title().replace('_', ' ')
                     elif format_type == 'kph-mph':
@@ -6167,6 +6215,8 @@ class Icloud3:#(DeviceScanner):
         self.waze_region   = waze_region.upper()
         self.waze_realtime = waze_realtime
 
+        self.WazeRouteCalc = WazeRouteCalculator(self.waze_region, self.waze_realtime)
+
         min_dist_msg = (f"{waze_min_distance} {self.unit_of_measurement}")
         max_dist_msg = (f"{waze_max_distance} {self.unit_of_measurement}")
 
@@ -6201,18 +6251,18 @@ class Icloud3:#(DeviceScanner):
         attrs[ATTR_ZONE]               = NOT_SET
         attrs[ATTR_LAST_ZONE]          = NOT_SET
         attrs[ATTR_ZONE_TIMESTAMP]     = ''
-        attrs[ATTR_INTERVAL]           = ''
-        attrs[ATTR_WAZE_TIME]          = ''
+        attrs[ATTR_INTERVAL]           = '___'
+        attrs[ATTR_WAZE_TIME]          = 0
         attrs[ATTR_ZONE_DISTANCE]      = 0
         attrs[ATTR_CALC_DISTANCE]      = 0
         attrs[ATTR_WAZE_DISTANCE]      = 0
-        attrs[ATTR_LAST_LOCATED]       = TIMESTAMP_ZERO
-        attrs[ATTR_LAST_UPDATE_TIME]   = TIMESTAMP_ZERO
-        attrs[ATTR_NEXT_UPDATE_TIME]   = TIMESTAMP_ZERO
+        attrs[ATTR_LAST_LOCATED]       = '___'    #TIMESTAMP_ZERO
+        attrs[ATTR_LAST_UPDATE_TIME]   = '___'    #TIMESTAMP_ZERO
+        attrs[ATTR_NEXT_UPDATE_TIME]   = '___'    #TIMESTAMP_ZERO
         attrs[ATTR_POLL_COUNT]         = '0:0:0'
-        attrs[ATTR_DIR_OF_TRAVEL]      = ''
+        attrs[ATTR_DIR_OF_TRAVEL]      = '___'
         attrs[ATTR_TRAVEL_DISTANCE]    = 0
-        attrs[ATTR_TRIGGER]            = ''
+        attrs[ATTR_TRIGGER]            = '___'
         attrs[ATTR_TIMESTAMP]          = dt_util.utcnow().isoformat()[0:19]
         attrs[ATTR_AUTHENTICATED]      = ''
         attrs[ATTR_BATTERY]            = 0
@@ -7344,9 +7394,13 @@ class Icloud3:#(DeviceScanner):
         if dev_trk_entity_id:
             #Extract all notify entitity id's with this devicename in them from hass notify services notify list
             notify_devicename_list = []
+            db=(f"7379 {notify_devicenames=}")
+            self._save_event_halog_info("*", db)
             for notify_devicename in notify_devicenames:
                 if instr(notify_devicename, devicename):
                     notify_devicename_list.append(notify_devicename.replace("mobile_app_", ""))
+                db=(f"7382 {notify_devicename=} {notify_devicename_list=}")
+                self._save_event_halog_info("*", db)
 
             self.notify_iosapp_entity[devicename] = notify_devicename_list
             self.device_tracker_entity_iosapp[devicename] = (f"device_tracker.{dev_trk_entity_id}")
@@ -7355,6 +7409,10 @@ class Icloud3:#(DeviceScanner):
             self.device_tracker_entity_iosapp[devicename] = ''
             self.iosapp_monitor_dev_trk_flag[devicename] is False
 
+        db=(f"7390 {self.device_tracker_entity_iosapp=}")
+        self._save_event_halog_info("*", db)
+        db=(f"7390 {self.notify_iosapp_entity=}")
+        self._save_event_halog_info("*", db)
         return
 
 #--------------------------------------------------------------------
@@ -7957,6 +8015,9 @@ class Icloud3:#(DeviceScanner):
                 travel_time = self.last_tavel_time.get(devicename_zone, '')
                 distance    = self.last_distance_str.get(devicename_zone, '')
 
+            travel_time = travel_time.replace('0 min', '')
+            distance = distance.replace('0 mi', '').replace('0 km', '')
+
             if (instr(type(event_text), 'dict') or instr(type(event_text), 'list')):
                  event_text = str(event_text)
 
@@ -8200,7 +8261,8 @@ class Icloud3:#(DeviceScanner):
                             last_long, zone, last_dist_from_zone_km):
 
         try:
-            if not self.distance_method_waze_flag:
+            if (not self.distance_method_waze_flag
+                    or self.WazeRouteCalc is None):
                 return (WAZE_NOT_USED, 0, 0, 0)
             elif zone == self.base_zone:
                 return (WAZE_USED, 0, 0, 0)
@@ -8251,6 +8313,7 @@ class Icloud3:#(DeviceScanner):
                     waze_status = WAZE_OUT_OF_RANGE
 
             except Exception as err:
+                _LOGGER.exception(err)
                 log_msg = (f"►INTERNAL ERROR (ProcWazeData)-{err})")
                 self._log_error_msg(log_msg)
 
@@ -8273,6 +8336,7 @@ class Icloud3:#(DeviceScanner):
                     waze_dist_last_poll)
 
         except Exception as err:
+            _LOGGER.exception(err)
             self._set_waze_not_available_error(err)
 
             return (WAZE_NO_DATA, 0, 0, 0)
@@ -8291,19 +8355,14 @@ class Icloud3:#(DeviceScanner):
         """
 
         try:
-            from_loc = f"{from_lat},{from_long}"
-            to_loc   = f"{to_lat},{to_long}"
-
             retry_cnt = 0
             while retry_cnt < 3:
                 try:
                     self.count_waze_locates[devicename] += 1
                     waze_call_start_time = time.time()
-                    route = WazeRouteCalculator.WazeRouteCalculator(
-                            from_loc, to_loc, self.waze_region)
 
                     route_time, route_distance = \
-                        route.calc_route_info(self.waze_realtime)
+                            self.WazeRouteCalc.calc_route_info(from_lat, from_long, to_lat, to_long)
 
                     self.time_waze_calls[devicename] += (time.time() - waze_call_start_time)
 
@@ -8312,12 +8371,14 @@ class Icloud3:#(DeviceScanner):
 
                     return (WAZE_USED, route_distance, route_time)
 
-                except WazeRouteCalculator.WRCError as err:
+                # except WazeRouteCalculator.WRCError as err:
+                except WRCError as err:
                     retry_cnt += 1
                     log_msg = (f"Waze Server Error (#{retry_cnt}), Retrying, Type-{err}")
                     self._log_info_msg(log_msg)
 
         except Exception as err:
+            _LOGGER.exception(err)
             self._set_waze_not_available_error(err)
 
         return (WAZE_NO_DATA, 0, 0)
@@ -8445,7 +8506,7 @@ class Icloud3:#(DeviceScanner):
             waze_time_msg = self._secs_to_time_str(t)
 
         else:
-            waze_time_msg = ''
+            waze_time_msg = '0 min'
 
         return waze_time_msg
 #--------------------------------------------------------------------
@@ -8826,6 +8887,7 @@ class Icloud3:#(DeviceScanner):
         self.entity_registry_file         = self.config_parameter[CONF_ENTITY_REGISTRY_FILE]
         self.config_ic3_file_name         = self.config_parameter[CONF_CONFIG_IC3_FILE_NAME]
         self.event_log_card_directory     = self.config_parameter[CONF_EVENT_LOG_CARD_DIRECTORY]
+        self.event_log_card_filename      = self.config_parameter[CONF_EVENT_LOG_CARD_FILENAME]
         self.config_devices_schema        = self.config_parameter[CONF_DEVICES]
         self.config_track_devices_parm    = self.config_parameter[CONF_TRACK_DEVICES]
 
@@ -8891,13 +8953,16 @@ class Icloud3:#(DeviceScanner):
     def _check_ic3_event_log_file_version(self):
         try:
             ic3_directory = os.path.abspath(os.path.dirname(__file__))
-            ic3_evlog_filename = (f"{ic3_directory}/icloud3-event-log-card.js")
+            if instr(self.event_log_card_filename, '.js') is False:
+                self.event_log_card_filename += '.js'
+            ic3_evlog_filename = (f"{ic3_directory}/{self.event_log_card_filename}")
+
             if os.path.exists(ic3_evlog_filename) is False:
                 return
 
             www_directory      = (f"{ic3_evlog_filename.split('custom_components')[0]}"
                                   f"{self.event_log_card_directory}")
-            www_evlog_filename = (f"{www_directory}/icloud3-event-log-card.js")
+            www_evlog_filename = (f"{www_directory}/{self.event_log_card_filename}")
             www_evlog_file_exists_flag = os.path.exists(www_evlog_filename)
 
 
@@ -9563,8 +9628,11 @@ class Icloud3:#(DeviceScanner):
             request_id   = self.hass_configurator_request_id.pop(self.username)
             configurator = self.hass.components.configurator
             configurator.request_done(request_id)
+            self._save_event("*", f"2fa1.10 Completed HA Notification Window Release (id-{request_id})")
 
-        self.hass_configurator_request_id[self.username] = configurator.request_config(
+        self._save_event("*", f"2fa1.1 Requesting New HA Notification Window")
+        self.hass_configurator_request_id[self.username] = \
+            configurator.request_config(
                 ("Apple ID Verification Code"),
                 self._icloud_2fa2_handle_verification_code_entry,
                 description    = (f"{invalid_code_msg}Enter the Apple ID Verification Code sent to the Trusted Device"),
@@ -9572,12 +9640,15 @@ class Icloud3:#(DeviceScanner):
                 submit_caption = 'Confirm',
                 fields         = [{'id': 'code', CONF_NAME: 'Verification Code'}]
         )
+        self._save_event("*", f"2fa1.2 Completed New HA Notification Window Request")
 
 #--------------------------------------------------------------------
     def _icloud_2fa2_handle_verification_code_entry(self, callback_data):
         """Handle the chosen trusted device."""
 
+        self._save_event("*", f"2fa2.err0 Validating pyicloud-ic3 iCloud API")
         if self._icloud_valid_api() is False:
+            self._save_event("*", f"2fa2.err1 Error, iCloud API not set up")
             return
 
         from .pyicloud_ic3 import PyiCloudException
@@ -9587,11 +9658,16 @@ class Icloud3:#(DeviceScanner):
         self._save_event("*", event_msg)
 
         try:
+            invalid_code_text = ''
+            self._save_event("*", f"2fa2.1 Sending Verification Code {self.verification_code} to iCloud for Verification")
             valid_code = self.api.validate_2fa_code(self.verification_code)
+            self._save_event("*", f"2fa2.2 Recieved Response, Valid Code-{valid_code}")
             if valid_code is False:
                 invalid_code_text = (f"The code {self.verification_code} in incorrect.\n\n")
+                self._save_event("*", f"2fa2.3 Invalid Code, Redisplay Code Entry Window")
                 self._icloud_2fa1_show_verification_code_entry_form(
                             invalid_code_msg=invalid_code_text)
+                self._save_event("*", f"2fa2.4 Invalid Code, Completed Code Entry Window Redisplay")
                 return
 
             event_msg = "Apple/iCloud Account Verification Successful"
@@ -9600,24 +9676,29 @@ class Icloud3:#(DeviceScanner):
         except PyiCloudException as error:
             # Reset to the initial 2FA state to allow the user to retry
             invalid_code_msg = (f"Failed to verify account > Error-{error}")
+            self._save_event("*", f"2fa2.5 Other Error, Redisplay Code Entry Window")
             self._save_event_halog_error("*", invalid_code_msg)
 
             # Trigger the code rentry step immediately
+            invalid_code_text = (f"The code {self.verification_code} in incorrect.\n\n")
             self._icloud_2fa1_show_verification_code_entry_form(
                             invalid_code_msg=invalid_code_text)
+            self._save_event("*", f"2fa2.6 Other Error, Completed Code Entry Window Redisplay")
             return
 
         if valid_code is False:
                 invalid_code_text = (f"The Verification Code {self.verification_code} in incorrect.\n\n")
-
+                self._save_event("*", f"2fa2.7 Invalid Code, Redisplay Code Entry Window")
                 self._icloud_2fa1_show_verification_code_entry_form(
                             invalid_code_msg=invalid_code_text)
+                self._save_event("*", f"2fa2.8 Other Error, Completed Code Entry Window Redisplay")
                 return
 
         if self.username in self.hass_configurator_request_id:
             request_id   = self.hass_configurator_request_id.pop(self.username)
             configurator = self.hass.components.configurator
             configurator.request_done(request_id)
+            self._save_event("*", f"2fa2.10 Completed HA Notification Window Release (id-{request_id})")
 
         self._setup_tracking_method(self.tracking_method_config)
         event_msg = (f"{EVLOG_ALERT}iCloud Alert > iCloud Account Verification completed")
@@ -9902,7 +9983,7 @@ class Icloud3:#(DeviceScanner):
                     self._update_device_icloud('Resuming', devicename)
                 else:
                     attrs[ATTR_WAZE_DISTANCE] = PAUSED
-                    attrs[ATTR_WAZE_TIME]     = ''
+                    attrs[ATTR_WAZE_TIME]     = 0
 
             elif arg_command_cmd == 'location':
                 cmd_type = CMD_LOCATION

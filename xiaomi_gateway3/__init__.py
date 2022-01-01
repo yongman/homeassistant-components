@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 import voluptuous as vol
+from homeassistant.components.system_log import CONF_LOGGER
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, Event
@@ -10,6 +11,7 @@ from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.entity_registry import EntityRegistry
 from homeassistant.helpers.storage import Store
 
+from .core import logger
 from .core.gateway3 import Gateway3
 from .core.helpers import DevicesRegistry
 from .core.utils import DOMAIN, XiaomiGateway3Debug
@@ -30,6 +32,7 @@ CONFIG_SCHEMA = vol.Schema({
                 vol.Optional('occupancy_timeout'): cv.positive_int,
             }, extra=vol.ALLOW_EXTRA),
         },
+        CONF_LOGGER: logger.CONFIG_SCHEMA,
         vol.Optional(CONF_ATTRIBUTES_TEMPLATE): cv.template
     }, extra=vol.ALLOW_EXTRA),
 }, extra=vol.ALLOW_EXTRA)
@@ -38,14 +41,23 @@ CONFIG_SCHEMA = vol.Schema({
 async def async_setup(hass: HomeAssistant, hass_config: dict):
     config = hass_config.get(DOMAIN) or {}
 
-    if 'devices' in config:
-        for k, v in config['devices'].items():
+    if CONF_LOGGER in config:
+        logger.init(__name__, config[CONF_LOGGER], hass.config.config_dir)
+
+        info = await hass.helpers.system_info.async_get_system_info()
+        _LOGGER.debug(f"SysInfo: {info}")
+
+        # update global debug_mode for all gateways
+        if 'debug_mode' in config[CONF_LOGGER]:
+            setattr(Gateway3, 'debug_mode', config[CONF_LOGGER]['debug_mode'])
+
+    if CONF_DEVICES in config:
+        for k, v in config[CONF_DEVICES].items():
             # AA:BB:CC:DD:EE:FF => aabbccddeeff
             k = k.replace(':', '').lower()
             DevicesRegistry.defaults[k] = v
 
     hass.data[DOMAIN] = {
-        'debug': _LOGGER.level > 0,  # default debug from Hass config
         CONF_ATTRIBUTES_TEMPLATE: config.get(CONF_ATTRIBUTES_TEMPLATE)
     }
 
@@ -103,8 +115,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         for entity_id in remove:
             registry.async_remove(entity_id)
 
-    gw = hass.data[DOMAIN][entry.entry_id]
-    gw.stop()
+    gw: Gateway3 = hass.data[DOMAIN][entry.entry_id]
+    await gw.stop()
 
     await asyncio.gather(*[
         hass.config_entries.async_forward_entry_unload(entry, domain)
@@ -124,7 +136,9 @@ async def _setup_domains(hass: HomeAssistant, entry: ConfigEntry):
     gw: Gateway3 = hass.data[DOMAIN][entry.entry_id]
     gw.start()
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, gw.stop)
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, gw.stop)
+    )
 
 
 async def _setup_micloud_entry(hass: HomeAssistant, config_entry):
@@ -200,21 +214,23 @@ async def _handle_device_remove(hass: HomeAssistant):
         if not hass_device or not hass_device.identifiers:
             return
 
-        identifier = next(iter(hass_device.identifiers))
-
         # handle only our devices
-        if identifier[0] != DOMAIN or hass_device.name_by_user != 'delete':
+        for hass_did in hass_device.identifiers:
+            if hass_did[0] == DOMAIN and hass_device.name_by_user == 'delete':
+                break
+        else:
             return
 
         # remove from Mi Home
         for gw in hass.data[DOMAIN].values():
             if not isinstance(gw, Gateway3):
                 continue
-            gw_device = gw.get_device(identifier[1])
+            gw_device = gw.get_device(hass_did[1])
             if not gw_device:
                 continue
-            gw.debug(f"Remove device: {gw_device['did']}")
-            gw.miio.send('remove_device', [gw_device['did']])
+            if gw_device['type'] == 'zigbee':
+                gw.debug(f"Remove device: {gw_device['did']}")
+                await gw.miio.send('remove_device', [gw_device['did']])
             break
 
         # remove from Hass
@@ -224,21 +240,29 @@ async def _handle_device_remove(hass: HomeAssistant):
 
 
 async def _setup_logger(hass: HomeAssistant):
+    if not hasattr(_LOGGER, 'defaul_level'):
+        # default level from Hass config
+        _LOGGER.defaul_level = _LOGGER.level
+
     entries = hass.config_entries.async_entries(DOMAIN)
-    any_debug = any(e.options.get('debug') for e in entries)
+    web_logs = any(e.options.get('debug') for e in entries)
 
     # only if global logging don't set
-    if not hass.data[DOMAIN]['debug']:
+    if _LOGGER.defaul_level == logging.NOTSET:
         # disable log to console
-        _LOGGER.propagate = not any_debug
+        _LOGGER.propagate = web_logs is False
         # set debug if any of integrations has debug
-        _LOGGER.setLevel(logging.DEBUG if any_debug else logging.NOTSET)
+        _LOGGER.setLevel(logging.DEBUG if web_logs else logging.NOTSET)
 
     # if don't set handler yet
-    if any_debug and not _LOGGER.handlers:
+    if web_logs:
+        # skip if already added
+        if any(isinstance(h, XiaomiGateway3Debug) for h in _LOGGER.handlers):
+            return
+
         handler = XiaomiGateway3Debug(hass)
         _LOGGER.addHandler(handler)
 
-        info = await hass.helpers.system_info.async_get_system_info()
-        info.pop('timezone')
-        _LOGGER.debug(f"SysInfo: {info}")
+        if _LOGGER.defaul_level == logging.NOTSET:
+            info = await hass.helpers.system_info.async_get_system_info()
+            _LOGGER.debug(f"SysInfo: {info}")

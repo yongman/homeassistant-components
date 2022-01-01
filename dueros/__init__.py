@@ -189,11 +189,11 @@ def queryDevice(name, payload):
     domain = entity_id[:entity_id.find('.')]
 
     states = _hass.states.async_all()
-    if entity_id.startswith('sensor.temperature'):
+    if 'temperature' in entity_id:
         # 温度传感器
         state = _hass.states.get(entity_id)
         return {'temperatureReading': {'value': state.state}}
-    elif entity_id.startswith('sensor.humidity'):
+    elif 'humidity' in entity_id:
         # 湿度传感器
         state = _hass.states.get(entity_id)
         #return {'humidity': {'value': state.state, 'scale': '%'}}

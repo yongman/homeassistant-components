@@ -2,7 +2,8 @@ import logging
 import math
 
 from homeassistant.components.light import LightEntity, SUPPORT_BRIGHTNESS, \
-    ATTR_BRIGHTNESS, SUPPORT_COLOR_TEMP, ATTR_COLOR_TEMP, ATTR_TRANSITION
+    ATTR_BRIGHTNESS, SUPPORT_COLOR_TEMP, ATTR_COLOR_TEMP, ATTR_TRANSITION, \
+    SUPPORT_TRANSITION
 from homeassistant.config import DATA_CUSTOMIZE
 from homeassistant.util import color
 
@@ -47,9 +48,9 @@ class XiaomiZigbeeLight(XiaomiEntity, LightEntity):
 
     @property
     def supported_features(self):
-        return SUPPORT_BRIGHTNESS | SUPPORT_COLOR_TEMP
+        return SUPPORT_BRIGHTNESS | SUPPORT_COLOR_TEMP | SUPPORT_TRANSITION
 
-    def update(self, data: dict = None):
+    async def async_update(self, data: dict = None):
         if self.attr in data:
             self._state = bool(data[self.attr])
         # sometimes brightness and color_temp stored as string in Xiaomi DB
@@ -58,9 +59,9 @@ class XiaomiZigbeeLight(XiaomiEntity, LightEntity):
         if 'color_temp' in data:
             self._color_temp = int(data['color_temp'])
 
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
-    def turn_on(self, **kwargs):
+    async def async_turn_on(self, **kwargs):
         if ATTR_TRANSITION not in kwargs:
             custom = self.hass.data[DATA_CUSTOMIZE].get(self.entity_id)
             if CONF_DEFAULT_TRANSITION in custom:
@@ -81,17 +82,17 @@ class XiaomiZigbeeLight(XiaomiEntity, LightEntity):
                 br = int(kwargs[ATTR_BRIGHTNESS])
                 commands += [
                     f"zcl level-control o-mv-to-level {br} {tr}",
-                    f"send 0x{self.device['nwk']} 1 1"
+                    f"send {self.device['nwk']} 1 1"
                 ]
 
             if ATTR_COLOR_TEMP in kwargs:
                 ct = int(kwargs[ATTR_COLOR_TEMP])
                 commands += [
                     f"zcl color-control movetocolortemp {ct} {tr} 0 0",
-                    f"send 0x{self.device['nwk']} 1 1"
+                    f"send {self.device['nwk']} 1 1"
                 ]
 
-            self.gw.send_zigbee_cli(commands)
+            await self.gw.send_zigbee_cli(commands)
             return
 
         payload = {}
@@ -106,9 +107,9 @@ class XiaomiZigbeeLight(XiaomiEntity, LightEntity):
         if not payload:
             payload[self.attr] = 1
 
-        self.gw.send(self.device, payload)
+        await self.gw.send_zigbee(self.device, payload)
 
-    def turn_off(self, **kwargs):
+    async def async_turn_off(self, **kwargs):
         if ATTR_TRANSITION not in kwargs:
             custom = self.hass.data[DATA_CUSTOMIZE].get(self.entity_id)
             if CONF_DEFAULT_TRANSITION in custom:
@@ -120,12 +121,12 @@ class XiaomiZigbeeLight(XiaomiEntity, LightEntity):
             tr = int(kwargs[ATTR_TRANSITION] * 10.0)
             commands = [
                 f"zcl level-control o-mv-to-level 0 {tr}",
-                f"send 0x{self.device['nwk']} 1 1"
+                f"send {self.device['nwk']} 1 1"
             ]
-            self.gw.send_zigbee_cli(commands)
+            await self.gw.send_zigbee_cli(commands)
             return
 
-        self.gw.send(self.device, {self.attr: 0})
+        await self.gw.send_zigbee(self.device, {self.attr: 0})
 
 
 class XiaomiMeshLight(XiaomiEntity, LightEntity):
@@ -175,7 +176,7 @@ class XiaomiMeshLight(XiaomiEntity, LightEntity):
         if max_brightness:
             self._max_brightness = max_brightness
 
-    def update(self, data: dict = None):
+    async def async_update(self, data: dict = None):
         if data is None:
             self.gw.mesh_force_update()
             return
@@ -197,9 +198,9 @@ class XiaomiMeshLight(XiaomiEntity, LightEntity):
             self._color_temp = \
                 color.color_temperature_kelvin_to_mired(data['color_temp'])
 
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
-    def turn_on(self, **kwargs):
+    async def async_turn_on(self, **kwargs):
         # instantly change the HA state, and after 2 seconds check the actual
         # state of the lamp (optimistic change state)
         payload = {}
@@ -223,18 +224,18 @@ class XiaomiMeshLight(XiaomiEntity, LightEntity):
 
         self._state = True
 
-        self.gw.send_mesh(self.device, payload)
+        await self.gw.send_mesh(self.device, payload)
 
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
-    def turn_off(self):
+    async def async_turn_off(self):
         # instantly change the HA state, and after 2 seconds check the actual
         # state of the lamp (optimistic change state)
         self._state = False
 
-        self.gw.send_mesh(self.device, {self.attr: False})
+        await self.gw.send_mesh(self.device, {self.attr: False})
 
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
 
 class XiaomiMeshGroup(XiaomiMeshLight):

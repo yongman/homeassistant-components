@@ -10,12 +10,15 @@ from .core.helpers import XiaomiEntity
 
 _LOGGER = logging.getLogger(__name__)
 
-RUN_STATES = [STATE_CLOSING, STATE_OPENING, None]
+RUN_STATES = {0: STATE_CLOSING, 1: STATE_OPENING}
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     def setup(gateway: Gateway3, device: dict, attr: str):
-        async_add_entities([XiaomiCover(gateway, device, attr)])
+        if device.get('lumi_spec'):
+            async_add_entities([XiaomiCover(gateway, device, attr)])
+        else:
+            async_add_entities([XiaomiCoverMIOT(gateway, device, attr)])
 
     gw: Gateway3 = hass.data[DOMAIN][config_entry.entry_id]
     gw.add_setup('cover', setup)
@@ -38,24 +41,39 @@ class XiaomiCover(XiaomiEntity, CoverEntity):
     def is_closed(self):
         return self.current_cover_position == 0
 
-    def update(self, data: dict = None):
+    async def async_update(self, data: dict = None):
         if 'run_state' in data:
-            self._state = RUN_STATES[data['run_state']]
+            self._state = RUN_STATES.get(data['run_state'])
 
         if 'position' in data:
             self._attrs[ATTR_CURRENT_POSITION] = data['position']
 
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
-    def open_cover(self, **kwargs):
-        self.gw.send(self.device, {'motor': 1})
+    async def async_open_cover(self, **kwargs):
+        await self.gw.send_zigbee(self.device, {'motor': 1})
 
-    def close_cover(self, **kwargs):
-        self.gw.send(self.device, {'motor': 0})
+    async def async_close_cover(self, **kwargs):
+        await self.gw.send_zigbee(self.device, {'motor': 0})
 
-    def stop_cover(self, **kwargs):
-        self.gw.send(self.device, {'motor': 2})
+    async def async_stop_cover(self, **kwargs):
+        await self.gw.send_zigbee(self.device, {'motor': 2})
 
-    def set_cover_position(self, **kwargs):
+    async def async_set_cover_position(self, **kwargs):
         position = kwargs.get(ATTR_POSITION)
-        self.gw.send(self.device, {'position': position})
+        await self.gw.send_zigbee(self.device, {'position': position})
+
+
+class XiaomiCoverMIOT(XiaomiCover):
+    async def async_open_cover(self, **kwargs):
+        await self.gw.send_zigbee(self.device, {'motor': 2})
+
+    async def async_close_cover(self, **kwargs):
+        await self.gw.send_zigbee(self.device, {'motor': 1})
+
+    async def async_stop_cover(self, **kwargs):
+        await self.gw.send_zigbee(self.device, {'motor': 0})
+
+    async def async_set_cover_position(self, **kwargs):
+        position = kwargs.get(ATTR_POSITION)
+        await self.gw.send_zigbee(self.device, {'target_position': position})

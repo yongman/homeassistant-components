@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import *
 
 from homeassistant.config import DATA_CUSTOMIZE
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 from homeassistant.helpers.entity import Entity
 
@@ -25,6 +26,8 @@ class XiaomiDevice:
     miot_spec: list
 
     device_info: Dict[str, Any]
+
+    stats: 'XiaomiEntity'
 
     extra: Dict[str, Any] = field(default_factory=dict)
 
@@ -67,6 +70,20 @@ class DevicesRegistry:
 
     def remove_entity(self, entity: 'XiaomiEntity'):
         entity.device['entities'].pop(entity.attr)
+
+    def add_stats(self, device: dict):
+        if 'stats' in device:
+            return
+
+        device['stats'] = None
+
+        self.setups['sensor'](self, device, device['type'])
+
+    def set_stats(self, entity: 'XiaomiEntity'):
+        entity.device['stats'] = entity
+
+    def remove_stats(self, entity: 'XiaomiEntity'):
+        entity.device.pop('stats')
 
     def find_or_create_device(self, device: dict) -> dict:
         type_ = device['type']
@@ -121,13 +138,23 @@ class XiaomiEntity(Entity):
     def debug(self, message: str):
         self.gw.debug(f"{self.entity_id} | {message}")
 
+    def parent(self, did: str = None):
+        if did is None:
+            did = self.device['init'].get('parent')
+        if did == '':
+            return '-'
+        try:
+            return self.gw.devices[did]['nwk']
+        except:
+            return None
+
     async def async_added_to_hass(self):
         """Also run when rename entity_id"""
         custom: dict = self.hass.data[DATA_CUSTOMIZE].get(self.entity_id)
         self._ignore_offline = custom.get('ignore_offline')
 
         if 'init' in self.device and self._state is None:
-            self.update(self.device['init'])
+            await self.async_update(self.device['init'])
 
         self.render_attributes_template()
 
@@ -162,7 +189,7 @@ class XiaomiEntity(Entity):
                                  self._ignore_offline)
 
     @property
-    def device_state_attributes(self):
+    def extra_state_attributes(self):
         return self._attrs
 
     @property
@@ -189,7 +216,7 @@ class XiaomiEntity(Entity):
                 'manufacturer': self.device.get('device_manufacturer'),
                 'model': self.device['device_model'],
                 'name': self.device['device_name'],
-                'sw_version': self.device.get('fw_ver'),
+                'sw_version': self.device['fw_ver'],
                 'via_device': (DOMAIN, self.gw.device['mac'])
             }
         else:  # ble and mesh
@@ -202,9 +229,10 @@ class XiaomiEntity(Entity):
                 'via_device': (DOMAIN, self.gw.device['mac'])
             }
 
-    def update(self, data: dict):
-        pass
+    async def async_update(self, data: dict):
+        raise NotImplementedError
 
+    @callback
     def render_attributes_template(self):
         try:
             attrs = attributes_template(self.hass).async_render({
