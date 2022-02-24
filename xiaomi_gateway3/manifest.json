@@ -6,7 +6,7 @@
   "issue_tracker": "https://github.com/AlexxIT/XiaomiGateway3/issues",
   "codeowners": ["@AlexxIT"],
   "dependencies": ["http"],
-  "requirements": [],
-  "version": "1.6.5",
+  "requirements": ["zigpy>=0.33.0"],
+  "version": "2.0.4",
   "iot_class": "local_push"
 }

@@ -27,7 +27,7 @@ from homeassistant.helpers.event import (
     async_track_state_change, async_track_time_interval)
 import homeassistant.helpers.config_validation as cv
 
-from .const import (PACKET_COOL_SILENT, PACKET_COOL_AUTO, PACKET_OFF, PACKET_HEAT,
+from .const import (PACKET_COOL_SILENT, PACKET_COOL_AUTO, PACKET_OFF, PACKET_HEAT, PACKET_HEAT_STRONG,
         PACKET_DEHUMIDIFICATION)
 
 _LOGGER = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ class DemoClimate(ClimateEntity):
         self._current_operation_select = operation_select
         self._aux = aux
         self._current_swing_mode = current_swing_mode
-        self._fan_list = ['silent', 'auto']
+        self._fan_list = ['silent', 'auto', 'strong']
         self._operation_list = ['heat', 'cool', 'auto', 'off', 'fan', 'dehumidification']
         self._swing_list = ['Auto', '1', '2', '3', 'Off']
         self._target_temperature_high = target_temp_high
@@ -361,11 +361,18 @@ class DemoClimate(ClimateEntity):
         if (self._current_operation == 'idle') or (self._current_operation =='off'):
             sendir = 'b64:' + PACKET_OFF
         elif self._current_operation == 'heat':
-            sendir = 'b64:' + PACKET_HEAT[int(self._target_temperature) - self._target_temperature_low]
+            if self._current_fan_mode == 'auto':
+                sendir = 'b64:' + PACKET_HEAT[int(self._target_temperature) - self._target_temperature_low]
+            elif self._current_fan_mode == 'strong':
+                sendir = 'b64:' + PACKET_HEAT_STRONG[int(self._target_temperature) - self._target_temperature_low]
+            else:
+                sendir = 'b64:' + PACKET_HEAT[int(self._target_temperature) - self._target_temperature_low]
         elif self._current_operation == 'cool':
             if self._current_fan_mode == 'silent':
                 sendir = 'b64:' + PACKET_COOL_SILENT[int(self._target_temperature) - self._target_temperature_low]
             elif self._current_fan_mode == 'auto':
+                sendir = 'b64:' + PACKET_COOL_AUTO[int(self._target_temperature) - self._target_temperature_low]
+            else:
                 sendir = 'b64:' + PACKET_COOL_AUTO[int(self._target_temperature) - self._target_temperature_low]
         elif self._current_operation == 'fan':
             sendir = 'b64:' + PACKET_FAN
