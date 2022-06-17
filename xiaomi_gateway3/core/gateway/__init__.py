@@ -17,7 +17,6 @@ import asyncio
 import json
 import logging
 import time
-from pathlib import Path
 
 from .base import SIGNAL_PREPARE_GW, SIGNAL_MQTT_CON, SIGNAL_MQTT_DIS, \
     SIGNAL_MQTT_PUB, SIGNAL_TIMER
@@ -87,28 +86,35 @@ class XGateway(GateGW3, GateE1):
 
         """Main thread loop."""
         while True:
-            # if not telnet - enable it
-            if not await self.check_port(23) and not await self.enable_telnet():
-                await asyncio.sleep(30)
-                continue
-
-            # if not mqtt - enable it (handle Mi Home and ZHA mode)
-            if not await self.prepare_gateway() or \
-                    not await self.mqtt.connect(self.host):
-                await asyncio.sleep(60)
-                continue
-
-            await self.mqtt_connect()
             try:
-                async for msg in self.mqtt:
-                    # noinspection PyTypeChecker
-                    asyncio.create_task(self.mqtt_message(msg))
-            finally:
-                await self.mqtt.disconnect()
-                await self.mqtt.close()
-                await self.mqtt_disconnect()
+                # if not telnet - enable it
+                if not await self.check_port(23) and \
+                        not await self.enable_telnet():
+                    await asyncio.sleep(30)
+                    continue
 
-        self.debug("Stop main thread")
+                # if not mqtt - enable it (handle Mi Home and ZHA mode)
+                if not await self.prepare_gateway() or \
+                        not await self.mqtt.connect(self.host):
+                    await asyncio.sleep(60)
+                    continue
+
+                await self.mqtt_connect()
+                try:
+                    async for msg in self.mqtt:
+                        # noinspection PyTypeChecker
+                        asyncio.create_task(self.mqtt_message(msg))
+                except Exception as e:
+                    self.debug(f"MQTT connection issue", exc_info=e)
+                finally:
+                    await self.mqtt.disconnect()
+                    await self.mqtt.close()
+                    await self.mqtt_disconnect()
+
+            except Exception as e:
+                self.error("Main loop error", exc_info=e)
+
+        self.debug("Stop main loop")
 
     async def timer(self):
         while True:
@@ -147,32 +153,34 @@ class XGateway(GateGW3, GateE1):
 
         try:
             await self.dispatcher_send(SIGNAL_MQTT_PUB, msg=msg)
-        except:
-            self.exception(f"Processing MQTT: {msg.topic} {msg.payload}")
+        except Exception as e:
+            self.error(
+                f"Processing MQTT: {msg.topic} {msg.payload}", exc_info=e
+            )
 
-    async def prepare_gateway(self):
+    async def prepare_gateway(self) -> bool:
         """Launching the required utilities on the gw, if they are not already
         running.
         """
-        sh: shell.TelnetShell = await shell.connect(self.host)
         try:
-            # should fail if no connection
-            await sh.get_version()
+            async with shell.Session(self.host) as session:
+                sh = await session.login()
 
-            self.debug(f"Prepare gateway {sh.model} with firmware {sh.ver}")
-            if isinstance(sh, shell.ShellGw3):
-                return await self.gw3_prepare_gateway(sh)
-            elif isinstance(sh, shell.ShellE1):
-                return await self.e1_prepare_gateway(sh)
-            else:
-                raise NotImplementedError
+                if not await sh.only_one():
+                    self.debug("Connection from a second Hass detected")
+                    return False
+
+                await sh.get_version()
+
+                self.debug(f"Prepare gateway {sh.model} with fw {sh.ver}")
+                if isinstance(sh, shell.ShellGw3):
+                    return await self.gw3_prepare_gateway(sh)
+                elif isinstance(sh, shell.ShellE1):
+                    return await self.e1_prepare_gateway(sh)
 
         except Exception as e:
-            self.debug(f"Can't prepare gateway", e)
+            self.error(f"Can't prepare gateway", e)
             return False
-
-        finally:
-            await sh.close()
 
     def update_available(self, value: bool):
         self.available = value
@@ -182,24 +190,30 @@ class XGateway(GateGW3, GateE1):
                 device.update_available()
 
     async def telnet_send(self, command: str):
-        sh: shell.TelnetShell = await shell.connect(self.host)
         try:
-            if command == "ftp":
-                await sh.run_ftp()
-            elif command == "dump":
-                raw = await sh.tar_data()
-                filename = Path().absolute() / f"{self.host}.tar.gz"
-                with open(filename, "wb") as f:
-                    f.write(raw)
-            elif command == "reboot":
-                await sh.reboot()
-            else:
-                await sh.exec(command)
+            async with shell.Session(self.host) as session:
+                sh = await session.login()
+                if command == "ftp":
+                    await sh.run_ftp()
+                elif command == "tardata":
+                    return await sh.tar_data()
+                elif command == "reboot":
+                    await sh.reboot()
+                else:
+                    await sh.exec(command)
+                return True
 
         except Exception as e:
             self.error(f"Can't run telnet command: {command}", exc_info=e)
-        finally:
-            await sh.close()
+            return False
+
+    async def tar_data(self) -> str:
+        try:
+            async with shell.Session(self.host) as session:
+                sh = await session.login()
+                return await sh.tar_data()
+        except Exception as e:
+            return f"{type(e).__name__} {e}"
 
     def check_available(self, ts: float):
         for device in list(self.devices.values()):

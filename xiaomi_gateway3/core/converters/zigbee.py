@@ -5,7 +5,9 @@ import zigpy.device
 import zigpy.quirks
 from zigpy.const import SIG_ENDPOINTS
 from zigpy.device import Device
+
 from .base import Converter, parse_time
+from .const import *
 from .silabs import *
 
 if TYPE_CHECKING:
@@ -38,9 +40,9 @@ def generate_device(manufacturer: str, model: str) -> Optional[Device]:
     return quirks[0](None, None, 0, device)
 
 
-################################################################################
+###############################################################################
 # Base (global) converters
-################################################################################
+###############################################################################
 
 
 @dataclass
@@ -211,9 +213,10 @@ class ZIASZoneConv(ZConverter):
     zigbee = "ias_zone"
 
     def decode(self, device: "XDevice", payload: dict, value: dict):
-        value = value.get("value")
-        if isinstance(value, list) and len(value) == 4:
-            payload[self.attr] = value[0] == 1
+        try:
+            payload[self.attr] = value["value"][0] == 1
+        except Exception:
+            pass
 
     def read(self, device: "XDevice", payload: dict):
         pass
@@ -267,9 +270,9 @@ class ZBatteryConv(ZConverter):
 #             payload[self.zattr] = value[self.zattr] * 100
 
 
-################################################################################
+###############################################################################
 # Specific defices converters
-################################################################################
+###############################################################################
 
 class ZTuyaChildModeConv(ZBoolConv):
     zigbee = "on_off"
@@ -291,21 +294,52 @@ class ZTuyaPowerOnConv(ZMapConv):
     map = {0: "off", 1: "on", 2: "previous"}
 
 
+class ZTuyaButtonModeConv(ZMapConv):
+    zigbee = "on_off"
+    zattr = 0x8004
+    map = {0: "command", 1: "event"}
+
+    def config(self, device: "XDevice", payload: dict, gateway):
+        # set default mode
+        self.encode(device, payload, "event")
+
+
 # Thanks to:
 # https://github.com/Koenkk/zigbee-herdsman-converters/blob/910271ae8fccb19305752d3f67381b4765853018/converters/fromZigbee.js#L4537
 # https://github.com/Koenkk/zigbee-herdsman/blob/068bbe7636f588394f69f82bc25c8b68a4feada7/src/zcl/definition/cluster.ts#L4284
-class ZTuyaModeConv(ZMapConv):
+class ZTuyaPlugModeConv(ZMapConv):
     zigbee = 0xE001
     zattr = 0xD030
     map = {0: "toggle", 1: "state", 2: "momentary"}
 
 
-# Thanks to:
-# https://github.com/Koenkk/zigbee-herdsman-converters/blob/9ecdae5fa9dd9e4ade2c5c698a0b800c3328a378/converters/fromZigbee.js#L2636
-class ZTuyaLedConv(ZTuyaModeConv):
+class ZTuyaButtonConfig(ZConverter):
+    def config(self, device: "XDevice", payload: dict, gateway):
+        # some stupid but necessary magic from zigbee2mqtt
+        cmd = zcl_read(device.nwk, self.ep, "on_off", 0x0004, 0x000, 0x0001,
+                       0x0005, 0x0007, 0xfffe)
+        cmd += zcl_read(device.nwk, self.ep, 0xE001, 0xD011)
+        payload.setdefault("commands", []).extend(cmd)
+
+
+class ZTuyaButtonConv(ZConverter):
     zigbee = "on_off"
-    zattr = 0x8001
-    map = {0: "off", 1: "off/on", 2: "on/off", 3: "on"}
+    zattr = "on_off"
+    map = {0: SINGLE, 1: DOUBLE, 2: HOLD}
+
+    def decode(self, device: 'XDevice', payload: dict, value: dict):
+        # TS004F sends click three times with same seq number
+        if device.extra.get("seq") == value["seq"] or \
+                value["endpoint"] != self.ep:
+            return
+
+        device.extra["seq"] = value["seq"]
+
+        try:
+            payload[self.attr] = value = self.map.get(value["value"][0])
+            payload["action"] = self.attr + "_" + value
+        except Exception:
+            pass
 
 
 class ZAqaraCubeMain(Converter):
@@ -488,9 +522,9 @@ class ZAqaraOppleMode(ZConverter):
         pass
 
 
-################################################################################
+###############################################################################
 # Final converter classes
-################################################################################
+###############################################################################
 
 ZSwitch = ZOnOffConv("switch", "switch")
 
@@ -499,4 +533,4 @@ ZBrightness = ZBrightnessConv("brightness", parent="light")
 ZColorTemp = ZColorTempConv("color_temp", parent="light")
 
 ZTuyaPowerOn = ZTuyaPowerOnConv("power_on_state", "select", enabled=False)
-ZTuyaMode = ZTuyaModeConv("mode", "select", enabled=False)
+# ZTuyaMode = ZTuyaModeConv("mode", "select", enabled=False)

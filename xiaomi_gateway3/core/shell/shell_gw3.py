@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import hashlib
 import re
 
@@ -21,7 +20,8 @@ RUN_FTP = "/data/busybox tcpsvd -E 0.0.0.0 21 /data/busybox ftpd -w &"
 # flash on another ports because running ZHA or z2m can breake process
 RUN_ZIGBEE_FLASH = "/data/ser2net -C '8115:raw:60:/dev/ttyS2:115200 8DATABITS NONE 1STOPBIT' -C '8038:raw:60:/dev/ttyS2:38400 8DATABITS NONE 1STOPBIT'"
 
-TAR_DATA = "tar -czOC /data basic_app basic_gw conf factory miio mijia_automation silicon_zigbee_host zigbee zigbee_gw ble_info miioconfig.db 2>/dev/null | base64"
+# c create, z gzip, O stdout, C change DIR
+TAR_DATA = "tar -czO /data/miio/mible_local.db* /data/silicon_zigbee_host/*.txt /data/zigbee /data/zigbee_gw 2>/dev/null | base64"
 
 MD5_BT = {
     # '1.4.6_0012': '367bf0045d00c28f6bff8d4132b883de',
@@ -47,7 +47,7 @@ def sed(app: str, pattern: str, repl: str):
 # grep output to cloud and send it to MQTT, use awk because buffer
 PATCH_MIIO_MQTT = sed(
     "miio", "^ +miio_client .+$",
-    "pkill -f log/miio\nmiio_client -l 0 -o FILE_STORE -d $MIIO_PATH -n 128 | awk '/ot_agent_recv_handler_one.+(ble_event|properties_changed|heartbeat)|record_offline/{print $0;fflush()}' | mosquitto_pub -t log/miio -l &"
+    "pkill -f log/miio\nmiio_client -l 0 -o FILE_STORE -d $MIIO_PATH -n 128 | awk '/ot_agent_recv_handler_one.+(ble_event|properties_changed|event_occured|heartbeat)|ot_agent_recv_handler_one.+?app_url/{print $0;fflush()}' | mosquitto_pub -t log/miio -l &"
 )
 # use patched silabs_ncp_bt from sourceforge and send stderr to MQTT
 PATCH_BLETOOTH_MQTT = sed(
@@ -178,11 +178,15 @@ class ShellGw3(TelnetShell):
         return True
 
     async def check_bin(self, filename: str, md5: str, url=None) -> bool:
-        """Check binary md5 and download it if needed."""
-        if md5 in await self.exec("md5sum /data/" + filename):
+        """Check binary md5 and if it is executable and download it if needed.
+        """
+        cmd = f"[ -x /data/{filename} ] && md5sum /data/{filename}"
+        if md5 in await self.exec(cmd):
             return True
         elif url:
-            await self.exec(WGET.format(url, filename))
+            # files from sourceforge.net can take up to 3 minutes to download
+            # for Chinese users
+            await self.exec(WGET.format(url, filename), timeout=300)
             return await self.check_bin(filename, md5)
         else:
             return False
@@ -222,9 +226,9 @@ class ShellGw3(TelnetShell):
     async def prevent_unpair(self):
         await self.exec("killall zigbee_gw")
 
-    async def tar_data(self):
-        raw = await self.exec(TAR_DATA, as_bytes=True)
-        return base64.b64decode(raw)
+    async def tar_data(self) -> str:
+        raw = await self.exec(TAR_DATA)
+        return raw.replace("\r\n", "")
 
     async def get_version(self):
         raw = await self.read_file('/etc/rootfs_fw_info')
@@ -263,7 +267,7 @@ class ShellGw3(TelnetShell):
     def mesh_device_table(self) -> str:
         return 'mesh_device_v3' if self.ver >= '1.4.7_0160' else 'mesh_device'
 
-    ############################################################################
+    ###########################################################################
 
     async def patch_miio_mqtt_fw146(self, ps: str):
         assert self.ver < "1.4.7_0000", self.ver
@@ -275,7 +279,7 @@ class ShellGw3(TelnetShell):
         await self.exec(MIIO2MQTT_FW146)
         await self.exec("daemon_miio.sh &")
 
-    ############################################################################
+    ###########################################################################
 
     def patch_miio_mqtt(self):
         self.mpatches.append(PATCH_MIIO_MQTT)
@@ -303,7 +307,7 @@ class ShellGw3(TelnetShell):
     def patch_zigbee_parents(self):
         self.apatches.append(PATCH_ZIGBEE_PARENTS)
 
-    ############################################################################
+    ###########################################################################
 
     @property
     def app_ps(self):

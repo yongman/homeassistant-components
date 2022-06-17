@@ -1,6 +1,8 @@
 import logging
 import re
 import time
+from collections import deque
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
 from . import converters
@@ -87,6 +89,27 @@ class XDevice:
         # internal device storage from any useful data
         self.extra: Dict[str, Any] = {}
         self.lazy_setup = set()
+
+    def as_dict(self, ts: float) -> dict:
+        resp = {
+            k: getattr(self, k) for k in (
+                "type", "model", "fw_ver", "available"
+            )
+        }
+        if self.decode_ts:
+            resp["decode_time"] = round(ts - self.decode_ts)
+        if self.encode_ts:
+            resp["encode_time"] = round(ts - self.encode_ts)
+
+        resp["entities"] = {
+            attr: entity.hass_state for attr, entity in self.entities.items()
+        }
+        resp["gateways"] = [gw.device.unique_id for gw in self.gateways]
+
+        if self.type in self.entities:
+            resp["stats"] = self.entities[self.type].extra_state_attributes
+
+        return resp
 
     @property
     def available(self):
@@ -209,7 +232,7 @@ class XDevice:
         if stats:
             kwargs["entities"] = {self.type: "sensor"}
 
-        for key in ("global", self.model, self.mac, self.did):
+        for key in (self.type, self.model, self.mac, self.did):
             if key in gateway.defaults:
                 update(kwargs, gateway.defaults[key])
 
@@ -243,7 +266,7 @@ class XDevice:
             if conv.enabled is None and conv.attr not in restore_entities:
                 self.lazy_setup.add(conv.attr)
                 continue
-            gateway.setups[domain](gateway, self, conv)
+            gateway.setup_entity(domain, self, conv)
 
     def setup_converters(self, entities: dict = None):
         """If no entities - use only required converters. Otherwise search for
@@ -301,7 +324,8 @@ class XDevice:
         payload = {}
 
         for param in value:
-            if param.get("error_code", 0) != 0:
+            # Lumi spec has `error_code`, MIoT spec has `code`
+            if param.get("error_code", 0) != 0 or param.get("code", 0) != 0:
                 continue
 
             v = param["value"] if "value" in param else param["arguments"]
@@ -337,8 +361,6 @@ class XDevice:
         if MESH in self.entities:
             self.update(self.decode(MESH, value))
 
-        for item in value:
-            item["error_code"] = item.pop("code", 0)
         return self.decode_lumi(value)
 
     def decode_zigbee(self, value: dict) -> Optional[dict]:
@@ -397,14 +419,14 @@ class XDevice:
             if entity.subscribed_attrs & attrs:
                 entity.async_set_state(value)
                 # noinspection PyProtectedMember
-                if entity._added:
+                if entity.added:
                     entity.async_write_ha_state()
 
     def update_available(self):
         for entity in self.entities.values():
             entity.async_update_available()
             # noinspection PyProtectedMember
-            if entity._added:
+            if entity.added:
                 entity.async_write_ha_state()
 
 
@@ -417,3 +439,36 @@ def update(orig_dict: dict, new_dict: dict):
         else:
             orig_dict[k] = new_dict[k]
     return orig_dict
+
+
+def logger_wrapper(func, log: deque, name: str = None):
+    def wrap(*args):
+        if not (name is None and args[0] == "ble"):
+            ts = datetime.now().isoformat(timespec="milliseconds")
+            log.append(
+                {"ts": ts, "type": name, "value": args[0]}
+                if name else
+                {"ts": ts, "type": "decode_" + args[0], "value": args[1]}
+            )
+        return func(*args)
+
+    return wrap
+
+
+def logger(device: XDevice) -> Optional[list]:
+    if "logger" not in device.extra:
+        device.extra["logger"] = log = deque(maxlen=100)
+        device.decode = logger_wrapper(device.decode, log)
+        device.decode_lumi = logger_wrapper(
+            device.decode_lumi, log, "decode_lumi"
+        )
+        device.decode_zigbee = logger_wrapper(
+            device.decode_zigbee, log, "decode_silabs"
+        )
+        device.encode = logger_wrapper(device.encode, log, "encode")
+        device.encode_read = logger_wrapper(
+            device.encode_read, log, "encode_read"
+        )
+        return None
+
+    return list(device.extra["logger"])

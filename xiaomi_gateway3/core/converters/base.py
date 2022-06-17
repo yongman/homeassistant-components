@@ -1,3 +1,4 @@
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -16,9 +17,9 @@ def parse_time(value: str) -> float:
     return float(value[:-1]) * TIME[value[-1]]
 
 
-################################################################################
+###############################################################################
 # Base (global) converters
-################################################################################
+###############################################################################
 
 @dataclass
 class Converter:
@@ -105,7 +106,8 @@ class MathConv(Converter):
             if self.multiply:
                 value *= self.multiply
             if self.round is not None:
-                value = round(value, self.round)
+                # convert to int when round is zero
+                value = round(value, self.round or None)
             payload[self.attr] = value
 
     def encode(self, device: "XDevice", payload: dict, value: float):
@@ -118,11 +120,12 @@ class MathConv(Converter):
 class BrightnessConv(Converter):
     max: float = 100.0
 
-    def decode(self, device: "XDevice", payload: dict, value: float):
+    def decode(self, device: "XDevice", payload: dict, value: int):
         payload[self.attr] = value / self.max * 255.0
 
     def encode(self, device: "XDevice", payload: dict, value: float):
-        super().encode(device, payload, value / 255.0 * self.max)
+        value = round(value / 255.0 * self.max)
+        super().encode(device, payload, int(value))
 
 
 @dataclass
@@ -184,9 +187,9 @@ class ButtonMIConv(ButtonConv):
         super().decode(device, payload, self.value)
 
 
-################################################################################
+###############################################################################
 # Device converters
-################################################################################
+###############################################################################
 
 class VibrationConv(Converter):
     def decode(self, device: "XDevice", payload: dict, value: int):
@@ -206,10 +209,18 @@ class TiltAngleConv(Converter):
 
 
 class CloudLinkConv(Converter):
-    def decode(self, device: "XDevice", payload: dict, value: dict):
-        # zero means online
-        # {"offline_time":1634407495,"offline_reason":30,"offline_ip":123,"offline_port":80}
-        payload[self.attr] = value["offline_time"] == 0
+    def decode(self, device: "XDevice", payload: dict, value: str):
+        if isinstance(value, str):
+            value = json.loads(value)["cloud_link"]
+        payload[self.attr] = bool(value)
+
+
+class ResetsConv(Converter):
+    def decode(self, device: "XDevice", payload: dict, value: int):
+        if 'resets0' not in device.extra:
+            device.extra['resets0'] = value
+        payload['new_resets'] = value - device.extra['resets0']
+        super().decode(device, payload, value)
 
 
 class ClimateConv(Converter):
@@ -278,7 +289,8 @@ class LockConv(Converter):
     mask: int = 0
 
     def decode(self, device: "XDevice", payload: dict, value: int):
-        payload[self.attr] = bool(value & self.mask)
+        # Hass: On means open (unlocked), Off means closed (locked)
+        payload[self.attr] = not bool(value & self.mask)
 
 
 # to get natgas sensitivity value - write: {"res_name": "4.1.85", "value": 1}
@@ -320,7 +332,7 @@ class ParentConv(Converter):
             # value in did format
             device: "XDevice" = device.gateways[0].devices[value]
             payload[self.attr] = device.nwk
-        except:
+        except Exception:
             payload[self.attr] = "-"
 
 
@@ -332,24 +344,39 @@ class OTAConv(Converter):
         try:
             # noinspection PyUnresolvedReferences
             device.gateways[0].device.update(payload)
-        except:
+        except Exception:
             pass
 
 
 class OnlineConv(Converter):
     def decode(self, device: "XDevice", payload: dict, value: dict):
-        payload[self.attr] = value["status"] == "online"
-
         dt = value["time"]
-        device.available = dt < device.available_timeout
-        device.decode_ts = time.time() - dt
+        new_ts = time.time() - dt
+        # if the device will be on two gateways (by accident), the online time
+        # from "wrong" gateway could be wrong
+        if new_ts < device.decode_ts:
+            return
 
+        device.available = dt < device.available_timeout
+        device.decode_ts = new_ts
+
+        payload[self.attr] = value["status"] == "online"
         payload["zigbee"] = datetime.now(timezone.utc) - timedelta(seconds=dt)
 
 
-################################################################################
+class RemoveDIDConv(Converter):
+    def decode(self, device: "XDevice", payload: dict, value: Any):
+        # two formats:
+        # "res_name":"8.0.2082","value":{"did":"lumi.1234567890"}"
+        # "res_name":"8.0.2082","value":"lumi.1234567890"
+        if isinstance(value, dict):
+            value = value["did"]
+        super().decode(device, payload, value)
+
+
+###############################################################################
 # Final converter classes
-################################################################################
+###############################################################################
 
 # https://github.com/Koenkk/zigbee2mqtt/issues/798
 # https://www.maero.dk/aqara-temperature-humidity-pressure-sensor-teardown/
@@ -430,7 +457,7 @@ Channel2_MI31 = Converter("channel_2", "switch", mi="3.p.1")
 
 # global props
 LUMI_GLOBALS = {
-    "8.0.2002": Converter("resets", "sensor"),
+    "8.0.2002": ResetsConv("resets", "sensor"),
     "8.0.2022": Converter("fw_ver", "sensor"),
     "8.0.2036": ParentConv("parent", "sensor"),
     "8.0.2091": OTAConv("ota_progress", "sensor"),

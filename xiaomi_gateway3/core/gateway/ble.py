@@ -27,7 +27,7 @@ class BLEGateway(GatewayBase):
                 if not device:
                     device = XDevice(BLE, row[2], row[4], mac)
                 self.add_device(mac, device)
-        except:
+        except Exception:
             pass
 
     async def ble_prepare_gateway(self, sh: shell.ShellGw3):
@@ -38,6 +38,8 @@ class BLEGateway(GatewayBase):
         if ok:
             self.debug("Patch Bluetooth")
             sh.patch_bluetooth_mqtt()
+        else:
+            self.error("Can't patch Bluetooth utility")
 
         if not self.options.get('memory'):
             return

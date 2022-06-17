@@ -84,9 +84,13 @@ class XiaomiZigbeeLight(XiaomiLight):
 
         if tr is not None:
             if kwargs:
+                # For the Aqara bulb, it is important that the brightness
+                # parameter comes before the color_temp parameter. Only this
+                # way transition will work. So we use `kwargs.pop` func to set
+                # the exact order of parameters.
                 for k in (ATTR_BRIGHTNESS, ATTR_COLOR_TEMP):
                     if k in kwargs:
-                        kwargs[k] = (kwargs[k], tr)
+                        kwargs[k] = (kwargs.pop(k), tr)
             else:
                 kwargs[ATTR_BRIGHTNESS] = (255, tr)
 
@@ -115,8 +119,9 @@ class XiaomiMeshBase(XiaomiLight):
         kwargs[self.attr] = True
         await self.device_send(kwargs)
 
-    async def async_turn_off(self):
-        await self.device_send({self.attr: False})
+    async def async_turn_off(self, **kwargs):
+        kwargs[self.attr] = False
+        await self.device_send(kwargs)
 
 
 # noinspection PyAbstractClass
@@ -150,6 +155,8 @@ class XiaomiMeshGroup(XiaomiMeshBase):
 
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
+        if not self.device.extra["childs"]:
+            return
         for did in self.device.extra["childs"]:
             child = self.gw.devices[did]
             child.entities.pop(self.attr)

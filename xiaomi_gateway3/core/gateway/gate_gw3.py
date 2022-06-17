@@ -1,5 +1,4 @@
 import asyncio
-import json
 import time
 from typing import Optional
 
@@ -103,12 +102,6 @@ class GateGW3(
 
     async def gw3_mqtt_publish(self, msg: MQTTMessage):
         if msg.topic == 'log/miio':
-            payload = decode_miio_offline(msg.payload)
-            if payload:
-                payload = self.device.decode("cloud_link", payload["params"])
-                self.device.update(payload)
-                return
-
             payload = decode_miio_json(msg.payload, b'event.gw.heartbeat')
             if payload:
                 payload = payload[0]['params'][0]
@@ -139,54 +132,40 @@ class GateGW3(
         self.debug(f"Gateway time offset: {self.time_offset}")
 
     async def gw3_update_serial_stats(self):
-        sh: shell.ShellGw3 = await shell.connect(self.host)
-        if not sh:
-            return
         try:
-            serial = await sh.read_file('/proc/tty/driver/serial')
-            payload = self.device.decode(GATEWAY, {"serial": serial.decode()})
-            self.device.update(payload)
-        finally:
-            await sh.close()
+            async with shell.Session(self.host) as session:
+                sh = await session.login()
+                serial = await sh.read_file('/proc/tty/driver/serial')
+                payload = self.device.decode(
+                    GATEWAY, {"serial": serial.decode()}
+                )
+                self.device.update(payload)
+        except Exception as e:
+            self.warning("Can't update gateway stats", e)
 
     async def gw3_memory_sync(self):
-        sh: shell.ShellGw3 = await shell.connect(self.host)
         try:
-            await sh.memory_sync()
+            async with shell.Session(self.host) as session:
+                sh = await session.login()
+                await sh.memory_sync()
         except Exception as e:
-            self.debug(f"Can't memory sync", e)
-        finally:
-            await sh.close()
+            self.error(f"Can't memory sync", e)
 
     async def gw3_send_lock(self, enable: bool) -> bool:
-        self.debug(f"Set firmware lock to {enable}")
-
-        sh: shell.ShellGw3 = await shell.connect(self.host)
         try:
-            await sh.lock_firmware(enable)
-            locked = await sh.check_firmware_lock()
-            return enable == locked
-
+            async with shell.Session(self.host) as session:
+                sh = await session.login()
+                await sh.lock_firmware(enable)
+                locked = await sh.check_firmware_lock()
+                return enable == locked
         except Exception as e:
-            self.debug(f"Can't set firmware lock", e)
+            self.error(f"Can't set firmware lock", e)
             return False
 
-        finally:
-            await sh.close()
-
     async def gw3_read_lock(self) -> Optional[bool]:
-        sh: shell.ShellGw3 = await shell.connect(self.host)
         try:
-            return await sh.check_firmware_lock()
+            async with shell.Session(self.host) as session:
+                sh = await session.login()
+                return await sh.check_firmware_lock()
         except Exception as e:
-            self.debug(f"Can't get firmware lock", e)
-            return None
-        finally:
-            await sh.close()
-
-
-def decode_miio_offline(raw: bytes) -> Optional[dict]:
-    if b"_internal.record_offline" not in raw:
-        return None
-    _, raw = raw.split(b":, ", 1)
-    return json.loads(raw)
+            self.error(f"Can't get firmware lock", e)

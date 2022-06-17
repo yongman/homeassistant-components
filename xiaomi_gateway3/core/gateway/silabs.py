@@ -122,13 +122,12 @@ class SilabsGateway(GatewayBase):
         await self.mqtt.publish(f"gw/{self.ieee}/commands", payload)
 
     async def silabs_prevent_unpair(self):
-        sh: shell.TelnetShell = await shell.connect(self.host)
         try:
-            await sh.prevent_unpair()
+            async with shell.Session(self.host) as session:
+                sh = await session.login()
+                await sh.prevent_unpair()
         except Exception as e:
-            self.error("Can't prevent unpair", exc_info=e)
-        finally:
-            await sh.close()
+            self.error("Can't prevent unpair", e)
 
     async def silabs_config(self, device: XDevice):
         """Run some config converters if device spec has them. Binds, etc."""
@@ -193,5 +192,5 @@ def parse_version(value: str) -> int:
         if "_" in value:
             _, value = value.split("_")
         return int(value)
-    except:
+    except Exception:
         return 0

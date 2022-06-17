@@ -18,7 +18,7 @@ Each converter has:
     Converter(<attribute name>, <hass domain>, <mi name>)
 
 - attribute - required, entity or attribute name in Hass
-- domain - optional, hass entity type (`sensor`, `switch`, `binary_sensor`, etc)
+- domain - optional, hass entity type (`sensor`, `switch`, `binary_sensor`...)
 - mi - optional, item name in Lumi spec (`8.0.2012`) or MIoT spec (`2.p.1`)
 - enabled - optional, default True:
    - True - entity will be enabled on first setup
@@ -41,9 +41,10 @@ Converter may have different types:
 For MIoT bool properties you should use `Converter`. For MIoT uint8 properties
 you should use `BoolConv`.
 
-By default, the entity is updated only if the decoded payload has its attribute.
-But one entity can process multiple attributes, example bulb: `light`,
-`brightness`, `color_temp`. In this case you should set `parent` attribute name:
+By default, the entity is updated only if the decoded payload has its
+attribute. But one entity can process multiple attributes, example bulb:
+`light`, `brightness`, `color_temp`. In this case you should set `parent`
+attribute name:
 
     BoolConv("light", "light", "4.1.85")
     BrightnessConv("brightness", mi="14.1.85", parent="light")
@@ -85,14 +86,13 @@ Support levels:
 Nice project with MIoT spec description: https://home.miot-spec.com/
 """
 from .base import *
-from .const import *
 from .mibeacon import *
 from .stats import *
 from .zigbee import *
 
-################################################################################
+###############################################################################
 # Gateways
-################################################################################
+###############################################################################
 
 DEVICES = [{
     "lumi.gateway.mgl03": ["Xiaomi", "Gateway 3", "ZNDMWG03LM ZNDMWG02LM"],
@@ -108,7 +108,7 @@ DEVICES = [{
         Converter("discovered_mac", mi="8.0.2110", parent="data"),
         Converter("pair_command", mi="8.0.2111", parent="data"),
         Converter("added_device", mi="8.0.2084", parent="data"),
-        Converter("remove_did", mi="8.0.2082", parent="data"),
+        RemoveDIDConv("remove_did", mi="8.0.2082", parent="data"),
 
         # also updated from child devices OTAConv
         Converter("ota_progress", parent="data"),
@@ -117,10 +117,12 @@ DEVICES = [{
         Converter("power_tx", mi="8.0.2012"),
         Converter("channel", mi="8.0.2024"),
 
-        MapConv("command", "select", map=GW3_COMMANDS),
+        Converter("command", "select", parent="data"),
         Converter("data", "select"),
 
-        CloudLinkConv("cloud_link", "binary_sensor", enabled=False),
+        CloudLinkConv(
+            "cloud_link", "binary_sensor", mi="8.0.2155", enabled=False
+        ),
         BoolConv("led", "switch", mi="6.p.6", enabled=False),
 
         GatewayStats,
@@ -148,16 +150,16 @@ DEVICES = [{
         Converter("power_tx", mi="8.0.2012"),
         Converter("channel", mi="8.0.2024"),
 
-        MapConv("command", "select", map=E1_COMMANDS),
+        Converter("command", "select", parent="data"),
         Converter("data", "select"),
 
         GatewayStats
     ],
 }]
 
-################################################################################
+###############################################################################
 # Zigbee
-################################################################################
+###############################################################################
 
 DEVICES += [{
     # don"t work: protect 8.0.2014, power 8.0.2015, plug_detection 8.0.2044
@@ -397,14 +399,14 @@ DEVICES += [{
     "spec": [
         MapConv("motor", "cover", mi="14.2.85", map=MOTOR),
         Converter("position", mi="1.1.85", parent="motor"),
-        MapConv("run_state", mi="14.4.85", map=RUN_STATE),
+        MapConv("run_state", mi="14.4.85", map=RUN_STATE, parent="motor"),
     ],
 }, {
     "lumi.curtain.hagl04": ["Aqara", "Curtain B1 EU", "ZNCLDJ12LM"],
     "spec": [
         MapConv("motor", "cover", mi="14.2.85", map=MOTOR),
         Converter("position", mi="1.1.85", parent="motor"),
-        MapConv("run_state", mi="14.4.85", map=RUN_STATE),
+        MapConv("run_state", mi="14.4.85", map=RUN_STATE, parent="motor"),
         Converter("battery", "sensor", mi="8.0.2001"),
         MapConv("power_mode", mi="14.5.85", map={
             1: "adapter", 3: "battery", 4: "charging"
@@ -424,6 +426,7 @@ DEVICES += [{
         Converter("battery", "sensor", mi="8.0.2001"),
         LockActionConv("key_id", "sensor", mi="13.1.85"),
         # BoolConv("lock", "binary_sensor", mi="13.20.85")
+        Action,
     ],
 }, {
     # it's better to read only one property 13.26.85 and ignore others
@@ -549,8 +552,8 @@ DEVICES += [{
             0: "stop", 1: "close", 2: "open"
         }),
         Converter("target_position", mi="2.p.4"),
-        CurtainPosConv("position", mi="2.p.5"),
-        MapConv("run_state", mi="2.p.6", map=RUN_STATE),
+        CurtainPosConv("position", mi="2.p.5", parent="motor"),
+        MapConv("run_state", mi="2.p.6", map=RUN_STATE, parent="motor"),
         Converter("battery", "sensor", mi="3.p.4"),  # percent
         Converter("motor_reverse", "switch", mi="2.p.7", enabled=False),
         MapConv("battery_low", "binary_sensor", mi="3.p.1", map=BATTERY_LOW,
@@ -887,9 +890,9 @@ DEVICES += [{
     ]
 }]
 
-################################################################################
+###############################################################################
 # 3rd party zigbee
-################################################################################
+###############################################################################
 
 DEVICES += [{
     # only one attribute with should_poll
@@ -929,7 +932,7 @@ DEVICES += [{
         ZTuyaPowerOnConv("power_on_state", "select", enabled=False),
         ZTuyaLEDModeConv("led", "select", enabled=False),
         ZTuyaChildModeConv("child_mode", "switch", enabled=False),
-        ZTuyaModeConv("mode", "select", enabled=False)
+        ZTuyaPlugModeConv("mode", "select", enabled=False)
     ],
 }, {
     # tuya relay with neutral, 1 gang
@@ -946,7 +949,57 @@ DEVICES += [{
     "spec": [
         ZOnOffConv("channel_1", "switch", ep=1, bind=True),
         ZOnOffConv("channel_2", "switch", ep=2, bind=True),
-        ZTuyaPowerOn, ZTuyaMode,
+        ZTuyaPowerOn,
+        ZTuyaPlugModeConv("mode", "select", enabled=False),
+    ],
+}, {
+    # tuya relay with neutral, 3 gang
+    "TS0003": ["Tuya", "Relay", "TS0003"],
+    "support": 3,
+    "spec": [
+        ZOnOffConv("channel_1", "switch", ep=1, bind=True),
+        ZOnOffConv("channel_2", "switch", ep=2, bind=True),
+        ZOnOffConv("channel_3", "switch", ep=3, bind=True),
+        ZTuyaPowerOn,
+        ZTuyaPlugModeConv("mode", "select", enabled=False),
+    ],
+}, {
+    # tuya relay with neutral, 4 gang
+    "TS0004": ["Tuya", "Relay", "TS0004"],
+    "support": 3,
+    "spec": [
+        ZOnOffConv("channel_1", "switch", ep=1, bind=True),
+        ZOnOffConv("channel_2", "switch", ep=2, bind=True),
+        ZOnOffConv("channel_3", "switch", ep=3, bind=True),
+        ZOnOffConv("channel_4", "switch", ep=4, bind=True),
+        ZTuyaPowerOn,
+        ZTuyaPlugModeConv("mode", "select", enabled=False),
+    ],
+}, {
+    "TS004F": ["Tuya", "Wireless Four Button", "RSH-Zigbee-SC04"],
+    "spec": [
+        ZTuyaButtonConfig("action", "sensor"),
+        ZTuyaButtonConv("button_1", ep=1, bind=True),
+        ZTuyaButtonConv("button_2", ep=2, bind=True),
+        ZTuyaButtonConv("button_3", ep=3, bind=True),
+        ZTuyaButtonConv("button_4", ep=4, bind=True),
+        ZBatteryConv("battery", "sensor", bind=True),
+        ZTuyaButtonModeConv("mode", "select", enabled=False),
+    ],
+}, {
+    # very simple relays with binding
+    "TS0011": ["Tuya", "Single Switch (no N)", "TS0011"],
+    "support": 5,
+    "spec": [ZOnOffConv("switch", "switch", bind=True)],
+}, {
+    # very simple 2 gang relays with binding
+    "TS0012": ["Tuya", "Double Switch", "TS0012"],
+    "support": 5,
+    "spec": [
+        ZOnOffConv("channel_1", "light", ep=1, bind=True),
+        ZOnOffConv("channel_2", "light", ep=2, bind=True),
+        ZTuyaPowerOn,
+        ZTuyaPlugModeConv("mode", "select", enabled=False),
     ],
 }, {
     # very simple relays
@@ -954,12 +1007,6 @@ DEVICES += [{
     "SA-003-Zigbee": ["eWeLink", "Zigbee OnOff Controller", "SA-003-Zigbee"],
     "support": 5,  # @AlexxIT
     "spec": [ZSwitch]
-}, {
-    # very simple relays with binding
-    "QS-Zigbee-S05-L": ["Lonsonho", "Switch w/o neutral", "TS0011"],
-    "TS0011": ["Tuya", "Switch", "TS0011"],
-    "support": 5,
-    "spec": [ZOnOffConv("switch", "switch", bind=True)],
 }, {
     "Lamp_01": ["Ksentry Electronics", "OnOff Controller", "KS-SM001"],
     "spec": [
@@ -1049,6 +1096,15 @@ DEVICES += [{
         ZBrightnessConv("brightness", parent="light"),
     ],
 }, {
+    "TRADFRI bulb E14 WS opal 600lm": [
+        "IKEA", "Bulb E14 WS opal 600lm", "LED1738G7"
+    ],
+    "spec": [
+        ZOnOffConv("light", "light"),
+        ZXiaomiBrightnessConv("brightness", parent="light"),
+        ZXiaomiColorTempConv("color_temp", parent="light")
+    ],
+}, {
     "TRADFRI remote control": [
         "IKEA", "TRADFRI remote control", "E1524/E1810"
     ],
@@ -1067,9 +1123,9 @@ DEVICES += [{
     ],
 }]
 
-################################################################################
+###############################################################################
 # BLE
-################################################################################
+###############################################################################
 
 # https://custom-components.github.io/ble_monitor/by_brand
 DEVICES += [{
@@ -1111,6 +1167,7 @@ DEVICES += [{
     275: ["Xiaomi", "Kettle", "YM-K1501"],  # international
     1116: ["Xiaomi", "Viomi Kettle", "V-SK152"],  # international
     "spec": [MiBeacon, BLEPower, BLETemperature],
+    "ttl": "12h",
 }, {
     1249: ["Xiaomi", "Magic Cube", "XMMF01JQD"],
     "spec": [MiBeacon, Action],
@@ -1195,9 +1252,9 @@ DEVICES += [{
     ],
 }]
 
-################################################################################
+###############################################################################
 # Mesh
-################################################################################
+###############################################################################
 
 DEVICES += [{
     # brightness 1..65535, color_temp 2700..6500
@@ -1207,6 +1264,7 @@ DEVICES += [{
     997: ["Yeelight", "Mesh Spotlight", "YLSD04YL"],  # flex
     1771: ["Xiaomi", "Mesh Bulb", "MJDP09YL"],  # flex
     1772: ["Xiaomi", "Mesh Downlight", "MJTS01YL/MJTS003"],  # flex
+    3291: ["Yeelight", "Mesh Downlight M1", "YLSD001"],  # flex
     2076: ["Yeelight", "Mesh Downlight M2", "YLTS02YL/YLTS04YL"],  # flex
     2342: ["Yeelight", "Mesh Bulb M2", "YLDP25YL/YLDP26YL"],  # flex
     "support": 4,  # @AlexxIT TODO: power_on_state values
@@ -1249,10 +1307,13 @@ DEVICES += [{
                         mink=3000, maxk=6400),
     ]
 }, {
-    1945: ["Unknown", "Mesh Wall Switch", "DHKG01ZM"],
+    1945: ["Xiaomi", "Mesh Wall Switch", "DHKG01ZM"],
     "spec": [
         Converter("switch", "switch", mi="2.p.1"),
         Converter("led", "switch", mi="10.p.1", enabled=False),
+        BoolConv("wireless", "switch", mi="2.p.2", enabled=False),
+        Converter("action", "sensor", enabled=False),
+        ButtonMIConv("button_1", mi="8.e.1", value=1),  # single
     ],
 }, {
     2007: ["Unknown", "Mesh Switch Controller", "lemesh.switch.sw0a01"],
@@ -1278,6 +1339,9 @@ DEVICES += [{
         Converter("led", "switch", mi="10.p.1", enabled=False),
         BoolConv("wireless_1", "switch", mi="2.p.2", enabled=False),
         BoolConv("wireless_2", "switch", mi="3.p.2", enabled=False),
+        Converter("action", "sensor", enabled=False),
+        ButtonMIConv("button_1", mi="8.e.1", value=1),  # single
+        ButtonMIConv("button_2", mi="9.e.1", value=1),  # single
     ],
 }, {
     2257: ["PTX", "Mesh Double Wall Switch", "PTX-SK2M"],
@@ -1315,16 +1379,26 @@ DEVICES += [{
     2715: ["Xiaomi", "Mesh Single Wall Switch", "ZNKG01HL"],
     "spec": [
         Converter("switch", "switch", mi="2.p.1"),
-        Converter("humidity", "sensor", mi="6.p.1"),
-        Converter("temperature", "sensor", mi="6.p.7"),
+        MathConv("humidity", "sensor", mi="6.p.1", round=2),
+        MathConv("temperature", "sensor", mi="6.p.7", round=2),
+        BoolConv("wireless", "switch", mi="2.p.2", enabled=False),
+        Converter("baby_mode", "switch", mi="11.p.1", enabled=False),
+        Converter("action", "sensor", enabled=False),
+        ButtonMIConv("button_1", mi="16.e.1", value=1),
     ]
 }, {
     2716: ["Xiaomi", "Mesh Double Wall Switch", "ZNKG02HL"],
     "spec": [
         Converter("channel_1", "switch", mi="2.p.1"),
         Converter("channel_2", "switch", mi="3.p.1"),
-        Converter("humidity", "sensor", mi="6.p.1"),
-        Converter("temperature", "sensor", mi="6.p.7"),
+        MathConv("humidity", "sensor", mi="6.p.1", round=2),
+        MathConv("temperature", "sensor", mi="6.p.7", round=2),
+        BoolConv("wireless_1", "switch", mi="2.p.2", enabled=False),
+        BoolConv("wireless_2", "switch", mi="3.p.2", enabled=False),
+        Converter("baby_mode", "switch", mi="11.p.1", enabled=False),
+        Converter("action", "sensor", enabled=False),
+        ButtonMIConv("button_1", mi="16.e.1", value=1),
+        ButtonMIConv("button_2", mi="18.e.1", value=1),
     ]
 }, {
     2717: ["Xiaomi", "Mesh Triple Wall Switch", "ZNKG03HL/ISA-KG03HL"],
@@ -1332,13 +1406,56 @@ DEVICES += [{
         Converter("channel_1", "switch", mi="2.p.1"),
         Converter("channel_2", "switch", mi="3.p.1"),
         Converter("channel_3", "switch", mi="4.p.1"),
-        Converter("humidity", "sensor", mi="6.p.1"),
-        Converter("temperature", "sensor", mi="6.p.7"),
+        MathConv("humidity", "sensor", mi="6.p.1", round=2),
+        MathConv("temperature", "sensor", mi="6.p.7", round=2),
         BoolConv("wireless_1", "switch", mi="2.p.2", enabled=False),
         BoolConv("wireless_2", "switch", mi="3.p.2", enabled=False),
         BoolConv("wireless_3", "switch", mi="4.p.2", enabled=False),
         Converter("baby_mode", "switch", mi="11.p.1", enabled=False),
+        Converter("action", "sensor", enabled=False),
+        ButtonMIConv("button_1", mi="16.e.1", value=1),
+        ButtonMIConv("button_2", mi="17.e.1", value=1),
+        ButtonMIConv("button_3", mi="18.e.1", value=1),
     ],
+}, {
+    6266: ["Gosund", "Mesh Triple Wall Switch S6AM", "cuco.switch.s6amts"],
+    "spec": [
+        Converter("channel_1", "switch", mi="2.p.1"),
+        Converter("channel_2", "switch", mi="3.p.1"),
+        Converter("channel_3", "switch", mi="4.p.1"),
+        MapConv("wireless_1", "select", mi="6.p.1", map={
+            0: "close", 1: "open-close", 2: "open-open"
+        }, enabled=False),
+        MapConv("wireless_2", "select", mi="6.p.2", map={
+            0: "close", 1: "open-close", 2: "open-open"
+        }, enabled=False),
+        MapConv("wireless_3", "select", mi="6.p.3", map={
+            0: "close", 1: "open-close", 2: "open-open"
+        }, enabled=False),
+        Converter("led", "switch", mi="8.p.1", enabled=False),  # bool
+        Converter("mode", "switch", mi="8.p.2", enabled=False),  # bool
+        Converter("action", "sensor", enabled=False),
+        ButtonMIConv("button_1", mi="9.e.2", value=1),
+        ButtonMIConv("button_1", mi="9.e.3", value=2),
+        ButtonMIConv("button_2", mi="9.e.5", value=1),
+        ButtonMIConv("button_2", mi="9.e.6", value=2),
+        ButtonMIConv("button_3", mi="9.e.8", value=1),
+        ButtonMIConv("button_3", mi="9.e.9", value=2),
+    ]
+}, {
+    6267: ["Gosund", "Mesh double Wall Switch S5AM", "cuco.switch.s5amts"],
+    "spec": [
+        Converter("left_switch", "switch", mi="2.p.1"),
+        Converter("right_switch", "switch", mi="3.p.1"),
+        MapConv("wireless_1", "select", mi="6.p.1", map={
+            0: "close", 1: "open-close", 2: "open-open"
+        }, enabled=False),
+        MapConv("wireless_2", "select", mi="6.p.2", map={
+            0: "close", 1: "open-close", 2: "open-open"
+        }, enabled=False),
+        Converter("led", "switch", mi="8.p.1", enabled=False),  # bool
+        Converter("mode", "switch", mi="8.p.2", enabled=False),  # bool
+    ]
 }, {
     4160: ["Xiaomi", "Mosquito Repeller 2", "WX10ZM"],
     # "support": 5,  # @AlexxIT need some tests
@@ -1357,6 +1474,24 @@ DEVICES += [{
     "spec": [
         Converter("switch", "light", mi="2.p.1"),  # bool
         BoolConv("light", "binary_sensor", mi="3.p.1")  # uint8 0-Dark 1-Bright
+    ],
+}, {
+    3129: ["Xiaomi", "Smart Curtain Motor", "MJSGCLBL01LM"],
+    "spec": [
+        MapConv("motor", "cover", mi="2.p.1", map={
+            0: "stop", 1: "open", 2: "close"
+        }),
+        Converter("target_position", mi="2.p.2"),
+        CurtainPosConv("position", mi="2.p.6", parent="motor"),
+        MapConv("run_state", mi="2.p.3", parent="motor", map={
+            0: "stop", 1: "opening", 2: "closing"
+        }),
+        Converter("battery", "sensor", mi="5.p.1"),  # percent
+        Converter("motor_reverse", "switch", mi="2.p.5", enabled=False),
+        MapConv("battery_charging", "binary_sensor", mi="5.p.2", map={
+            1: True, 2: False, 3: False,
+        }, enabled=False),
+        BoolConv("light", "binary_sensor", mi="3.p.11")
     ],
 }, {
     "default": "mesh",  # default Mesh device

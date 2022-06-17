@@ -6,7 +6,8 @@ from zigpy.zcl import Cluster
 from zigpy.zcl.foundation import Command, ZCLHeader, Attribute, \
     ReadAttributeRecord, DATA_TYPES
 from zigpy.zdo import ZDO
-from zigpy.zdo.types import ZDOCmd, SizePrefixedSimpleDescriptor, NodeDescriptor
+from zigpy.zdo.types import ZDOCmd, SizePrefixedSimpleDescriptor, \
+    NodeDescriptor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,16 +30,17 @@ def decode(data: dict):
             cluster_id = int(data['clusterId'], 0)
             raw = bytes.fromhex(data['APSPlayload'][2:])
             hdr, args = zdo.deserialize(cluster_id, raw)
+            cmd = ZDOCmd(hdr.command_id).name
             if hdr.command_id == ZDOCmd.Active_EP_rsp:
                 return {
-                    "command": str(hdr.command_id),
+                    "command": cmd,
                     "status": str(args[0]),
                     "endpoints": args[2]
                 }
             elif hdr.command_id == ZDOCmd.Simple_Desc_rsp:
                 desc: SizePrefixedSimpleDescriptor = args[2]
                 return {
-                    "command": str(hdr.command_id),
+                    "command": cmd,
                     "status": str(args[0]),
                     "device_type": desc.device_type,
                     "device_version": desc.device_version,
@@ -50,7 +52,7 @@ def decode(data: dict):
             elif hdr.command_id == ZDOCmd.Node_Desc_rsp:
                 desc: NodeDescriptor = args[2]
                 return {
-                    "command": str(hdr.command_id),
+                    "command": cmd,
                     "status": str(args[0]),
                     "is_mains_powered": desc.is_mains_powered,
                     "logical_type": str(desc.logical_type),
@@ -58,19 +60,21 @@ def decode(data: dict):
                 }
             elif hdr.command_id in (ZDOCmd.Bind_rsp, ZDOCmd.Mgmt_Leave_rsp):
                 return {
-                    "command": str(hdr.command_id),
+                    "command": cmd,
                     "status": str(args[0]),
                 }
-            elif hdr.command_id in (ZDOCmd.Node_Desc_req, ZDOCmd.Active_EP_req):
-                return {"command": str(hdr.command_id)}
+            elif hdr.command_id in (
+                    ZDOCmd.Node_Desc_req, ZDOCmd.Active_EP_req
+            ):
+                return {"command": cmd}
             elif hdr.command_id == ZDOCmd.Simple_Desc_req:
                 return {
-                    "command": str(hdr.command_id),
+                    "command": cmd,
                     "endpoint": args[0],
                 }
             elif hdr.command_id == ZDOCmd.Bind_req:
                 return {
-                    "command": str(hdr.command_id),
+                    "command": cmd,
                     "src_addr": args[0],
                     "src_endpoint": args[1],
                     "cluster": args[2],
@@ -78,19 +82,19 @@ def decode(data: dict):
                 }
             elif hdr.command_id == ZDOCmd.IEEE_addr_rsp:
                 return {
-                    "command": str(hdr.command_id),
+                    "command": cmd,
                     "status": args[0],
                     "ieee": args[1],
                     "nwk": args[2],
                 }
             elif hdr.command_id == ZDOCmd.Mgmt_Leave_req:
                 return {
-                    "command": str(hdr.command_id),
+                    "command": cmd,
                     "ieee": args[0],
                 }
             elif hdr.command_id == ZDOCmd.Mgmt_NWK_Update_rsp:
                 return {
-                    "command": str(hdr.command_id),
+                    "command": cmd,
                     "status": args[0],
                     "channels": args[1],
                     "total": args[2],
@@ -117,7 +121,10 @@ def decode(data: dict):
         except KeyError as e:
             return {"cluster_id": cluster_id, "error": f"Key error: {e}"}
 
-        payload = {"endpoint": int(data["sourceEndpoint"], 0)}
+        payload = {
+            "endpoint": int(data["sourceEndpoint"], 0),
+            "seq": hdr.tsn,
+        }
 
         if cluster.ep_attribute:
             payload["cluster"] = cluster.ep_attribute
@@ -125,7 +132,7 @@ def decode(data: dict):
             payload["cluster_id"] = cluster_id
 
         if hdr.frame_control.is_general:
-            payload["command"] = str(hdr.command_id)
+            payload["command"] = Command(hdr.command_id).name
 
             if (hdr.command_id == Command.Report_Attributes or
                     hdr.command_id == Command.Write_Attributes):
@@ -143,6 +150,8 @@ def decode(data: dict):
                     elif isinstance(value, list) and \
                             not isinstance(value, EUI64):
                         payload[name] = [v.value for v in value]
+                    elif isinstance(value, int):
+                        payload[name] = int(value)
                     else:
                         payload[name] = value
 
@@ -161,6 +170,8 @@ def decode(data: dict):
                             payload[name] = "0x" + value.hex()
                         elif isinstance(value, list):
                             payload[name] = [v.value for v in value]
+                        elif isinstance(value, int):
+                            payload[name] = int(value)
                         else:
                             payload[name] = value
                     else:
@@ -198,8 +209,8 @@ def decode(data: dict):
                 payload["value"] = args
 
         elif hdr.frame_control.is_cluster:
-            if isinstance(args, bytes) and args:
-                args = "0x" + args.hex()
+            # if isinstance(args, bytes) and args:
+            #     args = "0x" + args.hex()
 
             payload["command_id"] = hdr.command_id
             if hdr.command_id < len(cluster.commands):
